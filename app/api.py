@@ -20,6 +20,7 @@ from app import db
 from app.config import ID_PATTERN, PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX
 from app.schemas import (
     CategoryFilter,
+    ErrorResponse,
     PriorityFilter,
     StatusFilter,
     SubmissionAccepted,
@@ -32,6 +33,17 @@ from app.schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _error(description: str) -> dict:
+    """Declare an error reply for the interactive docs (6.2).
+
+    FastAPI documents its own `HTTPValidationError` for a 422 and says nothing
+    about the other codes, so `/docs` would advertise a shape this API never
+    sends. Naming `ErrorResponse` on each route makes the documentation match
+    the behaviour. This changes the generated schema only; no reply changes.
+    """
+    return {"model": ErrorResponse, "description": description}
 
 # Which error code a failed validation becomes, by where the bad value was.
 # FastAPI reports the location as a tuple whose first item is the part of the
@@ -173,6 +185,10 @@ class _ApiError(StarletteHTTPException):
     status_code=202,
     response_model=SubmissionAccepted,
     summary="Submit a ticket for classification",
+    responses={
+        409: _error("duplicate_id: a ticket with this id already exists"),
+        422: _error("invalid_input: the submitted ticket breaks a rule in 4.2"),
+    },
 )
 def submit_ticket(submission: TicketSubmission) -> SubmissionAccepted:
     """Store a ticket and accept it for later classification (6.3).
@@ -198,6 +214,9 @@ def submit_ticket(submission: TicketSubmission) -> SubmissionAccepted:
     "/tickets",
     response_model=TicketPage,
     summary="List tickets, filtered and paginated",
+    responses={
+        422: _error("invalid_query: a bad filter value, page or page size"),
+    },
 )
 def list_tickets(
     category: CategoryFilter | None = Query(default=None),
@@ -236,6 +255,10 @@ def list_tickets(
     "/tickets/{ticket_id}",
     response_model=Ticket,
     summary="Get one ticket by id",
+    responses={
+        404: _error("not_found: no ticket has this id"),
+        422: _error("invalid_id: the id in the path breaks the id pattern"),
+    },
 )
 def get_ticket(ticket_id: str = Path(pattern=ID_PATTERN)) -> Ticket:
     """Return one ticket, whatever state it is in (6.4).

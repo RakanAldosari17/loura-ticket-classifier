@@ -1,5 +1,6 @@
 """Tests for reading tickets back: get one, list with filters and pagination."""
 
+import json
 import sqlite3
 
 import pytest
@@ -323,6 +324,64 @@ def test_the_page_size_limit_is_inclusive(five_tickets):
     """100 is allowed; 101 is not."""
     assert five_tickets.get("/tickets?page_size=100").status_code == 200
     assert five_tickets.get("/tickets?page_size=101").status_code == 422
+
+
+# --- the interactive docs describe what the API really sends --------------
+
+
+def test_the_docs_advertise_our_error_format_not_fastapis(client):
+    """`/docs` must not promise a shape the API never sends.
+
+    FastAPI documents its own `HTTPValidationError` for a 422 and says nothing
+    about the other codes, so without this the interactive docs a reviewer reads
+    would disagree with every error reply they actually get.
+    """
+    schema = client.get("/openapi.json").json()
+
+    expected = {
+        ("/tickets", "post"): {"202", "409", "422"},
+        ("/tickets", "get"): {"200", "422"},
+        ("/tickets/{ticket_id}", "get"): {"200", "404", "422"},
+    }
+    for (path, method), codes in expected.items():
+        documented = schema["paths"][path][method]["responses"]
+        assert set(documented) == codes, (path, method)
+        for code in codes - {"200", "202"}:
+            ref = documented[code]["content"]["application/json"]["schema"]["$ref"]
+            assert ref.endswith("/ErrorResponse"), (path, method, code)
+
+    assert "HTTPValidationError" not in json.dumps(schema)
+
+
+def test_every_documented_error_validates_against_a_real_reply(client):
+    """The documented model is checked against what the endpoints return.
+
+    Declaring a shape in the docs is only worth anything if the replies match
+    it, so this parses each real error with the model the docs advertise.
+    """
+    from app.schemas import ErrorResponse
+
+    client.post("/tickets", json=VALID)
+    replies = [
+        client.post("/tickets", json={"id": "bad id", "subject": "s", "body": ""}),
+        client.post("/tickets", json=VALID),
+        client.get("/tickets?page_size=101"),
+        client.get("/tickets/t-9999"),
+        client.get("/tickets/bad%20id"),
+    ]
+
+    codes = set()
+    for reply in replies:
+        parsed = ErrorResponse.model_validate(reply.json())
+        codes.add(parsed.error.code)
+
+    assert codes == {
+        "invalid_input",
+        "duplicate_id",
+        "invalid_query",
+        "not_found",
+        "invalid_id",
+    }
 
 
 # --- the filter values match config.py ------------------------------------
