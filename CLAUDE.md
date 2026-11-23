@@ -36,4 +36,4 @@ plain `python` and `pytest` are the 3.12 ones.
 - First-time setup: `/opt/homebrew/bin/python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 - Run the service: `source .venv/bin/activate && uvicorn app.main:app` (docs at http://127.0.0.1:8000/docs)
 - Load the samples: `source .venv/bin/activate && python scripts/load_samples.py` (second terminal, from Chunk 7)
-- Run the tests: `source .venv/bin/activate && pytest`
+- Run the tests: `source .venv/bin/activate && python -m pytest` (plain `pytest` cannot import `app`; see DESIGN.md section 12)

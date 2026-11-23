@@ -654,7 +654,15 @@ pip install -r requirements.txt
 uvicorn app.main:app
 ```
 Load the samples (second terminal): `python scripts/load_samples.py`
-Run the tests: `pytest`
+Run the tests: `python -m pytest`
+
+**Why `python -m pytest` and not plain `pytest` [DECIDED 23 Nov 2026].** Plain `pytest` puts the
+*test file's* folder on Python's import path, not the project root, so `tests/` becomes importable
+but `app/` does not and every test fails with `ModuleNotFoundError: No module named 'app'`.
+`python -m` adds the current directory instead, so `import app` resolves. The alternatives were a
+`pyproject.toml` with `pythonpath = ["."]` or an empty root `conftest.py`; both work, but both add a
+file that is not in the section 13 tree. Rakan chose `python -m pytest`: no new file, no new
+dependency, no configuration, and section 13 stays exactly as designed.
 
 ---
 
@@ -711,7 +719,7 @@ Each chunk ends with the report in 0.1.2 and waits for Rakan.
 - Create the **private** GitHub repository `loura-ticket-classifier` with `gh` and connect it as the `origin` remote (rule 0.1.13).
 - Before the first push: check `.gitignore` excludes `.venv`, `.env`, `data/*.db` and cache folders, and that no file contains a secret.
 - Ask Rakan "Push chunk 0 to GitHub?" and push only after he says yes (rule 0.1.14).
-- **Done when:** `uvicorn app.main:app` starts and `/docs` loads; `pytest` runs (zero tests is fine).
+- **Done when:** `uvicorn app.main:app` starts and `/docs` loads; `python -m pytest` runs (zero tests is fine).
 
 ### Chunk 1: config and database layer
 - `config.py` (section 11), `db.py` (section 5).
