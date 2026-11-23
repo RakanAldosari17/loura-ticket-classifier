@@ -697,6 +697,7 @@ loura-ticket-classifier/
 │   └── load_samples.py        # submits the samples through POST /tickets, prints each reply
 └── tests/
     ├── conftest.py            # temp database per test, scripted fake model, test client
+    ├── test_db.py             # the storage layer (section 5)
     ├── test_ingest.py
     ├── test_reads.py
     ├── test_scoring.py
@@ -723,7 +724,9 @@ Each chunk ends with the report in 0.1.2 and waits for Rakan.
 
 ### Chunk 1: config and database layer
 - `config.py` (section 11), `db.py` (section 5).
-- **Tests:**
+- **Tests** (in `tests/test_db.py`, added to the section 13 tree on 23 Nov 2026: Chunk 1's tests are
+  all storage-layer tests, and splitting them across the feature test files would leave section 5
+  tested in four places):
   - insert then get returns the ticket as `pending`
   - inserting a duplicate id raises a duplicate error and changes nothing
   - CHECK constraints reject an invalid status, category, priority or reason

@@ -17,7 +17,7 @@ Update this list at the end of every chunk, so a new session knows where things 
 | Chunk | Status | Notes |
 |---|---|---|
 | 0: confirm and set up | done (23 Nov 2026) | All 9 approval items approved as proposed. Skeleton, git repo, first commit done. |
-| 1: config and database | not started | |
+| 1: config and database | done (23 Nov 2026) | `config.py` + `db.py`. 45 tests in `tests/test_db.py` (added to the section 13 tree). Both SQL guards mutation-tested. |
 | 2: the front door (API) | not started | |
 | 3: suspicion scoring | not started | |
 | 4: prompt and output validation | not started | |
