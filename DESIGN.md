@@ -257,6 +257,10 @@ Two environment decisions were taken at the same time (not design items, recorde
 - `subject`: string, **may be empty**, at most **200** characters.
 - `body`: string, required, at most **10,000** characters. **[DEFAULT A11]** "Required" means at least one non-whitespace character.
 - All three fields must be present and must be strings (an empty-string subject counts as present).
+  **Types are exact [DECIDED 23 Nov 2026, Rakan]:** a JSON number is never converted to text. `{"id":
+  1001}` is `invalid_input`, not the ticket `"1001"`. Ids come from the caller and duplicate detection
+  rests entirely on them (4.1), so accepting `1001` and `"1001"` as the same ticket, or silently
+  changing a caller's type, would undermine both.
 - **[DEFAULT A12]** Unknown extra fields are rejected as invalid input.
 - Limits are counted in **characters, not words** (word counts can be gamed with spacing).
 - Any violation: the request is rejected with an error explaining what was wrong. **Nothing is stored.**
@@ -353,8 +357,23 @@ Error codes:
 | `invalid_input` | 422 | submitted ticket breaks any rule in 4.2 |
 | `duplicate_id` | 409 | a ticket with this id already exists |
 | `invalid_id` | 422 | the id in a GET path breaks the id pattern |
-| `not_found` | 404 | no ticket with this id |
+| `not_found` | 404 | no ticket with this id, **or no such route** |
 | `invalid_query` | 422 | bad filter value, bad page or page size |
+| `method_not_allowed` | 405 | the path exists but does not offer this method |
+| `internal_error` | 500 | anything unexpected |
+
+**Route-level and catch-all codes [DECIDED 23 Nov 2026, Rakan].** The last three rows cover errors
+raised before, or outside, any endpoint:
+- An **unknown path** uses `not_found`, the same code as an unknown ticket id: both genuinely mean
+  "there is nothing here".
+- An **unsupported method** on a known path uses `method_not_allowed`, so a caller can tell "no such
+  ticket" from "no such endpoint".
+- **Any unexpected exception** becomes `500` / `internal_error` with a **generic message**. The
+  response carries **no exception text and no stack trace**: an error's text can name a file path, a
+  database column or a piece of someone's ticket, and none of that belongs in an HTTP reply. The full
+  error and its traceback are logged on the server instead.
+
+Nothing may leave the service in any other shape, including errors the web framework raises itself.
 
 ### 6.3 `POST /tickets`: submit a ticket
 Request:
@@ -848,6 +867,7 @@ loura-ticket-classifier/
 └── tests/
     ├── conftest.py            # temp database per test, scripted fake model, test client
     ├── test_db.py             # the storage layer (section 5)
+    ├── test_errors.py         # the catch-all 500 handler (6.2)
     ├── test_injection_detector.py  # the detector and its probability-to-points mapping (9.6)
     ├── test_ingest.py
     ├── test_reads.py

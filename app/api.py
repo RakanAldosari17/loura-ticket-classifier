@@ -48,6 +48,12 @@ _CODE_TO_MESSAGE = {
     "invalid_id": "The ticket id in the path is not valid.",
 }
 
+# Errors raised by routing, before any endpoint is reached (6.2, route level).
+_STATUS_TO_ROUTE_CODE = {
+    404: "not_found",
+    405: "method_not_allowed",
+}
+
 
 def error_response(
     status_code: int,
@@ -119,14 +125,38 @@ async def _handle_http_exception(
     detail = exception.detail
     if isinstance(detail, dict) and "code" in detail:
         return error_response(exception.status_code, detail["code"], detail["message"])
-    # Anything else is a framework-generated error, such as a wrong method.
-    return error_response(exception.status_code, "error", str(detail))
+
+    # Anything else came from routing: an unknown path, or a method the path
+    # does not offer. These get their own codes so a caller can tell "no such
+    # ticket" from "no such endpoint" without parsing the message.
+    code = _STATUS_TO_ROUTE_CODE.get(exception.status_code, "internal_error")
+    return error_response(exception.status_code, code, str(detail))
+
+
+async def _handle_unexpected_error(request: Request, exception: Exception) -> JSONResponse:
+    """Turn any unplanned failure into a safe 500 (6.2).
+
+    The full error, with its stack trace, goes to the log where the people
+    running the service can see it. The caller gets a generic message and
+    nothing else: an exception's text can name a file path, a table column or a
+    piece of a ticket, and none of that belongs in an HTTP reply.
+    """
+    logger.exception(
+        "unhandled error on %s %s", request.method, request.url.path
+    )
+    return error_response(
+        status_code=500,
+        code="internal_error",
+        message="The service could not handle this request.",
+    )
 
 
 def register_error_handlers(app: FastAPI) -> None:
     """Point FastAPI's error handling at the format in 6.2."""
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
+    # Last resort: nothing escapes in a different shape, or with internals in it.
+    app.add_exception_handler(Exception, _handle_unexpected_error)
 
 
 class _ApiError(StarletteHTTPException):

@@ -167,27 +167,31 @@ def test_an_id_containing_a_slash_is_a_different_path_not_a_bad_id(client):
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "status"),
+    ("method", "path", "status", "code"),
     [
-        ("GET", "/nope", 404),
-        ("GET", "/tickets/t/1001", 404),
-        ("DELETE", "/tickets/t-1001", 405),
-        ("PUT", "/tickets", 405),
+        ("GET", "/nope", 404, "not_found"),
+        ("GET", "/tickets/t/1001", 404, "not_found"),
+        ("DELETE", "/tickets/t-1001", 405, "method_not_allowed"),
+        ("PUT", "/tickets", 405, "method_not_allowed"),
     ],
 )
-def test_errors_from_routing_still_use_the_6_2_shape(client, method, path, status):
-    """Even errors raised before any endpoint runs look like every other error.
+def test_errors_from_routing_use_the_route_level_codes(client, method, path, status, code):
+    """Errors raised before any endpoint runs still match 6.2.
 
-    These are not in section 6.2's table of codes: 6.6 says there are no other
-    endpoints, so an unknown path is outside the design. What matters here is
-    that FastAPI's own error format never leaks out.
+    An unknown path and an unsupported method get their own codes, so a caller
+    can tell "no such ticket" from "no such endpoint" without reading the
+    message. FastAPI's own error format never leaks out.
     """
     response = client.request(method, path)
 
     assert response.status_code == status
-    payload = response.json()
-    assert set(payload) == {"error"}
-    assert set(payload["error"]) == {"code", "message"}
+    _assert_error_shape(response.json(), code, with_details=False)
+
+
+def test_an_unknown_ticket_and_an_unknown_route_both_say_not_found(client):
+    """Both are genuinely 'there is nothing here', so both use not_found."""
+    assert client.get("/tickets/t-9999").json()["error"]["code"] == "not_found"
+    assert client.get("/nope").json()["error"]["code"] == "not_found"
 
 
 # --- list tickets (6.5) ---------------------------------------------------

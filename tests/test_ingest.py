@@ -130,6 +130,30 @@ def test_invalid_input_is_rejected_and_nothing_is_stored(client, name, payload):
     assert db.list_tickets()[1] == 0, name
 
 
+@pytest.mark.parametrize(
+    "numeric_id",
+    [1001, 1001.0, -5],
+    ids=["integer", "float", "negative"],
+)
+def test_a_numeric_id_is_rejected_and_never_converted_to_text(client, numeric_id):
+    """A JSON number is not an id, and the service must not quietly make it one.
+
+    If `1001` were accepted by converting it to `"1001"`, then `1001` and
+    `"1001"` would be the same ticket, and a caller sending the wrong JSON type
+    would be told everything was fine. Ids come from the caller and are the
+    whole basis of duplicate detection (4.1), so the type has to be exact.
+    """
+    response = client.post(
+        "/tickets", json={"id": numeric_id, "subject": "s", "body": "b"}
+    )
+
+    assert response.status_code == 422
+    _assert_error_shape(response.json(), "invalid_input", with_details=True)
+    assert [d["field"] for d in response.json()["error"]["details"]] == ["id"]
+    # Nothing was stored under any spelling of that id.
+    assert db.list_tickets()[1] == 0
+
+
 def test_a_body_that_is_not_an_object_is_rejected(client):
     response = client.post("/tickets", json=["not", "an", "object"])
 
