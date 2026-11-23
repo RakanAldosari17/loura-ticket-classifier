@@ -105,12 +105,15 @@ def init_db() -> None:
         connection.close()
 
 
-def insert_ticket(ticket_id: str, subject: str, body: str) -> dict[str, Any]:
-    """Store a new ticket as `pending` and return it.
+def insert_ticket(ticket_id: str, subject: str, body: str) -> None:
+    """Store a new ticket as `pending`.
 
     Raises `DuplicateTicketError` if the id is already taken. Duplicates are
     caught by the PRIMARY KEY, not by looking first and then inserting: between
     a check and an insert, another request could store the same id.
+
+    Returns nothing: a caller that wants the stored ticket asks for it with
+    `get_ticket`, so this function has exactly one job.
     """
     now = _utc_now()
     connection = _connect()
@@ -130,10 +133,6 @@ def insert_ticket(ticket_id: str, subject: str, body: str) -> dict[str, Any]:
         raise DuplicateTicketError(ticket_id) from error
     finally:
         connection.close()
-
-    stored = get_ticket(ticket_id)
-    assert stored is not None  # just written, in autocommit mode
-    return stored
 
 
 def get_ticket(ticket_id: str) -> dict[str, Any] | None:

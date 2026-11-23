@@ -17,9 +17,9 @@ from app import config, db
 # --- helpers --------------------------------------------------------------
 
 
-def _insert(ticket_id: str, subject: str = "Subject", body: str = "Body") -> dict:
+def _insert(ticket_id: str, subject: str = "Subject", body: str = "Body") -> None:
     """Insert a ticket with sensible defaults, for tests that don't care."""
-    return db.insert_ticket(ticket_id, subject, body)
+    db.insert_ticket(ticket_id, subject, body)
 
 
 def _raw_connection() -> sqlite3.Connection:
@@ -42,7 +42,8 @@ def _set_status(ticket_id: str, status: str) -> None:
 
 
 def test_insert_then_get_returns_the_ticket_as_pending(temp_db):
-    db.insert_ticket("t-1001", "Charged twice", "Two charges of 49.00.")
+    # insert_ticket only saves; the stored values are read back with get_ticket.
+    assert db.insert_ticket("t-1001", "Charged twice", "Two charges of 49.00.") is None
 
     ticket = db.get_ticket("t-1001")
 
@@ -74,8 +75,11 @@ def test_an_empty_subject_is_stored_as_an_empty_string(temp_db):
 
 
 def test_timestamps_are_utc_iso_8601_to_the_second(temp_db):
-    ticket = _insert("t-1001")
+    _insert("t-1001")
 
+    ticket = db.get_ticket("t-1001")
+
+    assert ticket is not None
     for field in ("created_at", "updated_at"):
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", ticket[field]), field
 
@@ -518,6 +522,53 @@ def test_a_setting_that_is_not_a_number_fails_loudly(monkeypatch):
 
     with pytest.raises(ValueError, match="WORKER_COUNT"):
         config.load_settings()
+
+
+# A number of the right type can still be unusable, so each setting's range is
+# checked at startup. One test per rule, each asserting that the message names
+# the setting that is wrong: a startup failure has to tell you what to fix.
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_worker_count_below_one_fails_loudly(monkeypatch, value):
+    monkeypatch.setenv("WORKER_COUNT", value)
+
+    with pytest.raises(ValueError, match="WORKER_COUNT must be at least 1"):
+        config.load_settings()
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.1", "10"])
+def test_fake_failure_rate_outside_zero_to_one_fails_loudly(monkeypatch, value):
+    monkeypatch.setenv("FAKE_FAILURE_RATE", value)
+
+    with pytest.raises(ValueError, match="FAKE_FAILURE_RATE must be between 0 and 1"):
+        config.load_settings()
+
+
+@pytest.mark.parametrize("value", ["0", "0.0", "1"])
+def test_fake_failure_rate_accepts_both_ends_of_the_range(monkeypatch, value):
+    """0 disables broken replies and 1 makes every reply broken; both are legal."""
+    monkeypatch.setenv("FAKE_FAILURE_RATE", value)
+
+    assert config.load_settings().fake_failure_rate == float(value)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["POLL_INTERVAL_SECONDS", "MODEL_TIMEOUT_SECONDS", "RETRY_WAIT_SECONDS"],
+)
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_durations_of_zero_or_less_fail_loudly(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=f"{name} must be greater than 0"):
+        config.load_settings()
+
+
+def test_worker_count_of_one_is_allowed(monkeypatch):
+    monkeypatch.setenv("WORKER_COUNT", "1")
+
+    assert config.load_settings().worker_count == 1
 
 
 def test_settings_cannot_be_changed_once_loaded():

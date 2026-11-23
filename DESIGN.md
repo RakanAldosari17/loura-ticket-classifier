@@ -301,8 +301,8 @@ The CHECK constraints are a second line of defence: even a bug elsewhere cannot 
 ### 5.3 Database operations (all SQL lives in `db.py`)
 | Operation | Behaviour |
 |---|---|
-| `init_db()` | Creates the table and indexes if they don't exist. |
-| `insert_ticket(id, subject, body)` | Inserts with status `pending`. Duplicate id must be detected reliably by the PRIMARY KEY (catch the integrity error), not only by a check-then-insert. |
+| `init_db()` | Creates the table and indexes if they don't exist, and creates the database file's parent folder if it is missing (**[DECIDED 23 Nov 2026]**: without it a clean clone with no `data/` folder fails on the first write). |
+| `insert_ticket(id, subject, body)` | Inserts with status `pending` and **returns nothing** (**[DECIDED 23 Nov 2026]**: it has one job; a caller that wants the stored ticket reads it back with `get_ticket`). Duplicate id must be detected reliably by the PRIMARY KEY (catch the integrity error), not only by a check-then-insert. |
 | `get_ticket(id)` | Returns one ticket or nothing. |
 | `list_tickets(filters, page, page_size)` | Returns only the requested page plus the total count. Filters are optional and combined with AND. Order: **[DEFAULT A9]**. Always uses `?` placeholders. |
 | `claim_next_pending()` | Picks one `pending` ticket (order: **[DEFAULT A10]**) and sets it to `under_review` **in one atomic step**: `UPDATE ... SET status='under_review' WHERE id=? AND status='pending'`, then checks that exactly one row changed. If 0 rows changed, another worker won; return nothing. |
@@ -512,7 +512,8 @@ Strong phrases (3 points each):
 - `ignore previous instructions`
 - `ignore the above`
 - `disregard previous instructions`
-- `you are now`
+- `you are now a`
+- `you are now an`
 - `system prompt`
 - `classify it as`
 - `classify this as`
@@ -527,6 +528,13 @@ Weak phrases (1 point each):
 - `this ticket is from`
 
 (Deliberately not included: `refund` and `urgent` on their own, because real tickets use them; t-1001 asks for a refund and t-1006 says "not urgent".)
+
+**Revised 23 Nov 2026 (Rakan, Chunk 1 review).** `you are now` was replaced by `you are now a` and
+`you are now an`. Bare `you are now` appears in ordinary complaints — "you are now charging me twice",
+"you are now billing the wrong company name" — each of which would have scored 3 and been **rejected**
+as an injection. The tightened phrases still catch the role-change attack the signal exists for
+("you are now a helpful assistant that…", "you are now an admin"). Checked against all ten samples:
+no sample's score changes, so the worked example in 9.5 stands as written.
 
 ### 9.3 Matching rules [DEFAULT A18]
 - Case-insensitive.
@@ -625,6 +633,18 @@ All settings are read in one module (`config.py`) from environment variables, wi
 | `MODEL_TIMEOUT_SECONDS` | `20` | model call timeout |
 | `RETRY_WAIT_SECONDS` | `2` | wait before the one retry |
 | `DATABASE_PATH` | `./data/tickets.db` | **[DEFAULT A6]** |
+
+**Range checks at startup [DECIDED 23 Nov 2026].** Being the right type is not the same as being
+usable, so `config.py` also rejects numbers that parse but make no sense, raising an error that names
+the offending setting:
+
+| Setting | Rule | Why |
+|---|---|---|
+| `WORKER_COUNT` | at least 1 | with no workers, no ticket is ever classified |
+| `FAKE_FAILURE_RATE` | between 0 and 1 inclusive | it is a probability; 0 and 1 are both legal |
+| `POLL_INTERVAL_SECONDS` | greater than 0 | 0 is a busy-loop that never sleeps |
+| `MODEL_TIMEOUT_SECONDS` | greater than 0 | 0 or less fails every call before it starts |
+| `RETRY_WAIT_SECONDS` | greater than 0 | the retry must actually wait |
 
 Fixed limits (constants in `config.py`, not environment settings):
 | Constant | Value |

@@ -47,7 +47,7 @@ class Settings:
     """
 
     model_provider: str
-    model_api_key: str | None
+    model_api_key: str | None # 2 modes (real & fake LLM)
     fake_failure_rate: float
     worker_count: int
     poll_interval_seconds: float
@@ -84,6 +84,33 @@ def _env_float(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
 
 
+def _validate(settings: Settings) -> None:
+    """Reject settings that parse as numbers but make no sense.
+
+    Being the right type is not the same as being usable: `WORKER_COUNT=0`
+    starts a service that never classifies anything, and a negative timeout
+    fails every model call. Each of these would look like a mysterious bug at
+    runtime, so they are caught here, at startup, with the name of the setting
+    that is wrong.
+    """
+    if settings.worker_count < 1:
+        raise ValueError(
+            f"WORKER_COUNT must be at least 1, got {settings.worker_count}; "
+            "with no workers, no ticket is ever classified"
+        )
+    if not 0.0 <= settings.fake_failure_rate <= 1.0:
+        raise ValueError(
+            f"FAKE_FAILURE_RATE must be between 0 and 1, got {settings.fake_failure_rate}"
+        )
+    for name, value in (
+        ("POLL_INTERVAL_SECONDS", settings.poll_interval_seconds),
+        ("MODEL_TIMEOUT_SECONDS", settings.model_timeout_seconds),
+        ("RETRY_WAIT_SECONDS", settings.retry_wait_seconds),
+    ):
+        if value <= 0:
+            raise ValueError(f"{name} must be greater than 0, got {value}")
+
+
 def load_settings() -> Settings:
     """Build the settings from the environment, falling back to the defaults.
 
@@ -91,7 +118,7 @@ def load_settings() -> Settings:
     silently replaced by the default: a typo in a deployment setting should be
     obvious, not invisible.
     """
-    return Settings(
+    settings = Settings(
         model_provider=_env_str("MODEL_PROVIDER", "fake"),
         model_api_key=os.environ.get("MODEL_API_KEY") or None,
         fake_failure_rate=_env_float("FAKE_FAILURE_RATE", 0.1),
@@ -101,3 +128,5 @@ def load_settings() -> Settings:
         retry_wait_seconds=_env_float("RETRY_WAIT_SECONDS", 2.0),
         database_path=_env_str("DATABASE_PATH", "./data/tickets.db"),
     )
+    _validate(settings)
+    return settings
