@@ -18,7 +18,7 @@ Update this list at the end of every chunk, so a new session knows where things 
 |---|---|---|
 | 0: confirm and set up | done (23 Nov 2026) | All 9 approval items approved as proposed. Skeleton, git repo, first commit done. |
 | 1: config and database | done (23 Nov 2026), reviewed | `config.py` + `db.py`. 60 tests in `tests/test_db.py` (added to the section 13 tree). Both SQL guards mutation-tested. Rakan's review applied: `insert_ticket` returns nothing, setting range checks, strong phrase `you are now` tightened to `you are now a`/`an`. |
-| 2: the front door (API) | not started | |
+| 2: the front door (API) | done (23 Nov 2026) | `schemas.py`, `api.py`, minimal lifespan in `main.py` (init_db only). 139 tests. Fixed a clock-dependent flaky ordering test in Chunk 1's suite. |
 | 3: suspicion scoring | not started | |
 | 4: prompt and output validation | not started | |
 | 5: model interface and fake model | not started | |

@@ -29,6 +29,24 @@ def _raw_connection() -> sqlite3.Connection:
     return connection
 
 
+def _set_created_at(ticket_id: str, created_at: str) -> None:
+    """Force a ticket's created_at.
+
+    Ordering is by `created_at` first, and the timestamp is only accurate to the
+    second. If a test inserts several tickets and the loop happens to straddle a
+    second boundary, their order changes. Setting the timestamps explicitly makes
+    these tests deterministic, and actually exercises the ordering rather than
+    relying on the id tie-break by accident.
+    """
+    connection = _raw_connection()
+    try:
+        connection.execute(
+            "UPDATE tickets SET created_at = ? WHERE id = ?", (created_at, ticket_id)
+        )
+    finally:
+        connection.close()
+
+
 def _set_status(ticket_id: str, status: str) -> None:
     """Force a ticket's status, bypassing the guarded update."""
     connection = _raw_connection()
@@ -198,12 +216,26 @@ def test_claim_returns_none_when_nothing_is_pending(temp_db):
 
 
 def test_claim_takes_the_oldest_pending_ticket_first(temp_db):
-    """Oldest first, with the id as tie-break, so no ticket is starved."""
+    """Oldest first, so no ticket is starved by a steady stream of new ones."""
     _insert("t-1003")
     _insert("t-1001")
     _insert("t-1002")
+    _set_created_at("t-1003", "2026-11-23T10:00:01Z")  # oldest
+    _set_created_at("t-1001", "2026-11-23T10:00:02Z")
+    _set_created_at("t-1002", "2026-11-23T10:00:03Z")
 
-    # All three share a created_at second, so the id tie-break decides.
+    claimed = db.claim_next_pending()
+
+    assert claimed is not None
+    assert claimed["id"] == "t-1003"
+
+
+def test_claim_breaks_a_tie_on_created_at_with_the_id(temp_db):
+    """Timestamps are only accurate to the second, so ties are normal."""
+    for ticket_id in ("t-1003", "t-1001", "t-1002"):
+        _insert(ticket_id)
+        _set_created_at(ticket_id, "2026-11-23T10:00:00Z")
+
     claimed = db.claim_next_pending()
 
     assert claimed is not None
@@ -367,9 +399,14 @@ def test_reset_under_review_returns_zero_when_there_is_nothing_to_reset(temp_db)
 @pytest.fixture
 def listed_tickets(temp_db) -> None:
     """Five tickets covering every filter combination the tests need."""
-    for ticket_id in ("t-1001", "t-1002", "t-1003", "t-1004", "t-1005"):
+    for number, ticket_id in enumerate(
+        ("t-1001", "t-1002", "t-1003", "t-1004", "t-1005")
+    ):
         _insert(ticket_id)
         _set_status(ticket_id, "under_review")
+        # Distinct, descending timestamps: newest first is then t-1001 .. t-1005,
+        # whatever second the test actually runs in.
+        _set_created_at(ticket_id, f"2026-11-23T10:00:{5 - number:02d}Z")
 
     db.mark_classified("t-1001", "billing", "medium", "Double charge.", False)
     db.mark_classified("t-1002", "account", "medium", "Login broken.", False)
@@ -385,10 +422,9 @@ def test_list_with_no_filters_returns_everything(listed_tickets):
     assert len(items) == 5
 
 
-def test_list_is_newest_first_with_id_as_tie_break(listed_tickets):
+def test_list_is_newest_first(listed_tickets):
     items, _ = db.list_tickets()
 
-    # All five share a created_at second, so the id tie-break decides the order.
     assert [item["id"] for item in items] == [
         "t-1001",
         "t-1002",
@@ -396,6 +432,18 @@ def test_list_is_newest_first_with_id_as_tie_break(listed_tickets):
         "t-1004",
         "t-1005",
     ]
+
+
+def test_list_breaks_a_tie_on_created_at_with_the_id(temp_db):
+    """Without the tie-break, tickets saved in the same second sort arbitrarily,
+    and a paginated list could repeat or skip a row."""
+    for ticket_id in ("t-1003", "t-1001", "t-1002"):
+        _insert(ticket_id)
+        _set_created_at(ticket_id, "2026-11-23T10:00:00Z")
+
+    items, _ = db.list_tickets()
+
+    assert [item["id"] for item in items] == ["t-1001", "t-1002", "t-1003"]
 
 
 def test_list_filters_by_category(listed_tickets):
