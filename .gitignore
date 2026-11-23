@@ -1,0 +1,16 @@
+# Virtual environment
+.venv/
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local database files (the database is created on first run)
+data/*.db
+
+# Secrets: never committed
+.env
+
+# macOS
+.DS_Store
