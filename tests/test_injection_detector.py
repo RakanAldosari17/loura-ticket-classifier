@@ -269,19 +269,26 @@ def test_a_passing_gate_writes_the_model(monkeypatch, tmp_path):
 
 
 def test_the_gate_message_is_neutral(capsys, monkeypatch, tmp_path):
-    """The script is read by whoever retrains it, not just by one person."""
+    """The script is read by whoever retrains it, not just by one person.
+
+    The message is pinned in full rather than by keyword, so it cannot drift
+    back into addressing a particular person.
+    """
     script = _load_training_script()
-    monkeypatch.setattr(script, "DETECTOR_PATH", tmp_path / "detector.joblib")
+    detector_path = tmp_path / "detector.joblib"
+    monkeypatch.setattr(script, "DETECTOR_PATH", detector_path)
     monkeypatch.setattr(script, "report_samples", lambda model: ["t-1001"])
 
     script.main()
 
-    output = capsys.readouterr().out
-    assert "GATE FAILED" in output
-    assert "Do not tune the cut-offs" in output
-    assert "review the probabilities above" in output
-    assert "unchanged" in output
-    assert "Rakan" not in output
+    lines = capsys.readouterr().out.splitlines()
+
+    assert "GATE FAILED (9.7): t-1001" in lines
+    assert (
+        "Do not tune the cut-offs, features or thresholds to make this pass;"
+        " review the probabilities above." in lines
+    )
+    assert f"Nothing was written. {detector_path} is unchanged." in lines
 
 
 # --- what the detector adds over the phrase list -------------------------

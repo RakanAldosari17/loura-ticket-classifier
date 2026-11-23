@@ -1,5 +1,7 @@
 # DESIGN.md — Loura Support Ticket Classifier
 
+The working design brief I wrote with Claude and gave to Claude Code; section 0 is instructions to the agent.
+
 Owner: Rakan Aldosari
 Status: design complete and fully approved (all 9 [PROPOSED] items approved 23 Nov 2026); implementation in progress, chunk by chunk
 Source brief: "Engineering Take-Home", Loura (received Tue 17 Nov 2026, due Tue 24 Nov 2026, about 10:30 Riyadh time)

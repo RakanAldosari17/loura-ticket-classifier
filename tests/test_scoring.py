@@ -61,8 +61,8 @@ def test_t1005_matches_the_phrases_we_think_it_does():
 
 @pytest.mark.parametrize("ticket_id", LEGITIMATE_IDS)
 def test_the_nine_legitimate_samples_score_zero(ticket_id):
-    """Section 14 is explicit: if one of these scores above 0, report it to
-    Rakan rather than quietly changing the phrase lists."""
+    """A sample scoring above 0 is a finding to investigate, not a reason to
+    quietly edit the phrase lists until it scores 0 again."""
     assert _score_sample(ticket_id) == 0
 
 

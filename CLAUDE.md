@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Session instructions for Claude Code, kept to show how the project was built.
+
 Project: Loura support ticket classifier (engineering take-home for Rakan Aldosari).
 
 ## Always

@@ -295,10 +295,11 @@ there is no authentication or rate limiting.
 
 ## Time spent
 
-[HOURS: Rakan fills in] — over the 4–6 hour budget. The extra went on the trained
-detector and calibrating its cut-offs, the real provider, and the depth of the test
-suite. I'm new to backend, so part of the time went on learning FastAPI and SQLite as
-I built.
+About two days: about a day on the design (requirements, the three flows, the
+decisions in DESIGN.md) and a full day building and reviewing it with Claude Code.
+That's over the 4–6 hour budget. The extra went on the trained detector, the real
+provider and the test depth, and since I'm new to backend, part of the time went on
+learning FastAPI and SQLite as I built.
 
 ---
 
