@@ -14,7 +14,9 @@ from fastapi import FastAPI
 
 from app import db
 from app.api import register_error_handlers, router
+from app.config import load_settings
 from app.injection_detector import load_detector
+from app.models import get_model_client
 
 # One line per lifecycle event, at INFO (A27). Configured once, here, because
 # this module is the entry point and nothing else should touch global logging.
@@ -33,13 +35,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     makes it the right place for work that must happen before the first request
     and be undone after the last one.
 
-    So far this is steps 2 and 3 of 7.2. The settings check (step 1), the
-    restart reset (step 4) and the workers (step 5) arrive in later chunks.
+    So far this is steps 1 to 3 of 7.2. The restart reset (step 4) and the
+    workers (step 5) arrive in Chunk 6.
     """
-    # Step 2: load the detector before anything can be classified. If its file
-    # is missing this raises and the service does not start, which is the point:
-    # a defence that quietly disappears is worse than one obviously absent.
+    # Step 1: settings, and the model client they ask for. Building the client
+    # here is the startup check: a real provider with no key raises and the
+    # service never comes up, rather than falling back to the fake and looking
+    # healthy while classifying everything with a keyword matcher.
+    settings = load_settings()
+    app.state.settings = settings
+    app.state.model_client = get_model_client(settings)
+    logger.info("model provider %s ready", settings.model_provider)
+
+    # Step 2: the detector. If its file is missing this raises and the service
+    # does not start, which is the point: a defence that quietly disappears is
+    # worse than one that is obviously absent.
     load_detector()
+
+    # Step 3.
     db.init_db()
     logger.info("database ready")
     yield

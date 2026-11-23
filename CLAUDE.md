@@ -21,7 +21,7 @@ Update this list at the end of every chunk, so a new session knows where things 
 | 2: the front door (API) | done (23 Nov 2026) | `schemas.py`, `api.py`, minimal lifespan in `main.py` (init_db only). 139 tests. Fixed a clock-dependent flaky ordering test in Chunk 1's suite. |
 | 3: suspicion scoring | done (23 Nov 2026) | 3a `scoring.py` phrase lists. 3b trained detector: `injection_detector.py`, `scripts/train_injection_detector.py`, data+model in `data/injection/`. Cut-offs recalibrated 0.50/0.90 -> 0.65/0.85 after measuring (Rakan approved). 221 tests. |
 | 4: prompt and output validation | done (23 Nov 2026) | `classifier.py`: L2 prompt + L3 shape checks. 84 tests, 307 total. A test compares the prompt with DESIGN 10.2 word for word. Open finding: a realistic poisoned summary scores 1-2, so it is flagged not rejected (see Chunk 4 report). |
-| 5: model interface and fake model | not started | |
+| 5: model interface and fake model | done (23 Nov 2026) | `models/base.py` (ModelClient Protocol), `models/fake.py` (rules + 7 broken replies + scripted mode), `models/__init__.py` (get_model_client). Startup key check wired into `main.py`. Timeout decided: enforced by the worker. 38 tests, 354 total. |
 | 6: workers | not started | |
 | 7: samples end to end | not started | |
 | 8: README | not started | |

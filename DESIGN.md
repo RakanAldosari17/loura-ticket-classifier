@@ -763,7 +763,17 @@ class ModelClient(Protocol):
     def classify(self, instructions: str, ticket_text: str) -> str:
         """Return the model's raw reply text. Raise ModelUnavailableError on timeout or failure."""
 ```
-Instructions and ticket text are passed **separately** so a real provider can send them as separate messages (L2). The 20-second timeout is enforced by the caller (worker) or the client; explain the choice to Rakan in Chunk 5.
+Instructions and ticket text are passed **separately** so a real provider can send them as separate messages (L2).
+
+**The timeout is enforced by the worker, not the client [DECIDED 23 Nov 2026, Chunk 5].** The worker
+wraps the call in `asyncio.wait_for`, so the 20 seconds apply to **every** client without each one
+having to implement it. Three reasons: a client that forgot its own timeout would hang a worker
+forever and the ticket would sit in `under_review` until a restart; a provider SDK's own timeout
+covers only its own network call, not a slow retry loop inside the SDK; and the fake model has no I/O
+to time out at all, so a client-side timeout could not be tested without inventing a fake delay. The
+cost is that a timed-out call may still be running in its thread after the worker has given up; it is
+left to finish and its result is discarded, which is safe because nothing is written until the reply
+is validated.
 
 ### 10.2 Prompt [DECIDED A21: approved as written 23 Nov 2026]
 Instructions (sent separately from the ticket):
@@ -943,6 +953,7 @@ loura-ticket-classifier/
     ├── conftest.py            # temp database per test, scripted fake model, test client
     ├── test_db.py             # the storage layer (section 5)
     ├── test_errors.py         # the catch-all 500 handler (6.2)
+    ├── test_models.py         # the model interface, fake model and client choice (section 10)
     ├── test_injection_detector.py  # the detector and its probability-to-points mapping (9.6)
     ├── test_ingest.py
     ├── test_reads.py
