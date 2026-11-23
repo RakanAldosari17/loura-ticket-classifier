@@ -40,6 +40,7 @@ def _settings(**overrides) -> Settings:
     values = {
         "model_provider": "fake",
         "model_api_key": None,
+        "model_name": "claude-haiku-4-5",
         "fake_failure_rate": 0.0,
         "worker_count": 2,
         "poll_interval_seconds": 1.0,
@@ -311,16 +312,20 @@ def test_a_real_provider_without_a_key_refuses_to_start():
     assert "anthropic" in message
 
 
-def test_a_real_provider_with_a_key_is_still_not_supported_yet():
-    """No real provider is built, so it fails rather than pretending."""
+def test_a_provider_that_is_not_built_fails_rather_than_pretending():
+    """Only `fake` and `anthropic` exist. Anything else is refused.
+
+    The anthropic provider itself is covered in
+    `tests/test_anthropic_provider.py`, against a mocked HTTP layer.
+    """
     with pytest.raises(ValueError, match="not supported"):
-        get_model_client(_settings(model_provider="anthropic", model_api_key="k"))
+        get_model_client(_settings(model_provider="openai", model_api_key="k"))
 
 
 def test_an_unknown_provider_never_falls_back_to_the_fake():
     """The failure mode this prevents: a service that looks healthy while
     classifying everything with a keyword matcher."""
-    for provider in ("anthropic", "openai", "ollama", "FAKE", "Fake", ""):
+    for provider in ("openai", "ollama", "gemini", "FAKE", "Fake", ""):
         with pytest.raises(ValueError):
             client = get_model_client(
                 _settings(model_provider=provider, model_api_key="k")
@@ -332,7 +337,7 @@ def test_the_api_key_is_never_in_an_error_message():
     """An error can end up in a log, a terminal or a bug report."""
     with pytest.raises(ValueError) as caught:
         get_model_client(
-            _settings(model_provider="anthropic", model_api_key="sk-secret-123456")
+            _settings(model_provider="openai", model_api_key="sk-secret-123456")
         )
 
     assert "sk-secret-123456" not in str(caught.value)

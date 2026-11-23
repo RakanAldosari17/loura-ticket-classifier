@@ -196,7 +196,7 @@ Two environment decisions were taken at the same time (not design items, recorde
 
 | # | Question | When |
 |---|---|---|
-| A28 | Which real provider, if any | Chunk 9, only if Rakan wants a real provider |
+| A28 | Which real provider, if any | **Answered 23 Nov 2026: Anthropic**, built in Chunk 9 (10.4) |
 | A30 | If a worker hits an unexpected error while processing a ticket, which state is the ticket left in (`failed` with which reason, or back to `pending`)? | **Answered 23 Nov 2026: `failed` with the new reason `internal_error`** (4.3) |
 | A31 | Which folder holds the detector's training data and model file? | **Answered 23 Nov 2026: `data/injection/`**, holding `train.csv`, `test.csv` and `detector.joblib` together (section 13) |
 
@@ -839,11 +839,39 @@ words.
 - **For tests:** the fake can be constructed with a **scripted** list of replies and errors, returned in order, so every test is deterministic. Tests never depend on randomness.
 - No network, no API key, no cost.
 
-### 10.4 Real provider [DECIDED: optional, behind the same interface, chosen by a setting; provider ASK A28]
-- Built **only in Chunk 9, and only if Rakan says so.**
+### 10.4 Real provider [DECIDED; A28 answered 23 Nov 2026: Anthropic]
+- Built in Chunk 9. `app/models/anthropic.py`, selected with `MODEL_PROVIDER=anthropic`.
 - Selected by the `MODEL_PROVIDER` setting; the key comes from a setting and is never committed.
-- Provider selected but key missing → the service refuses to start, with a clear error asking for the key. No silent fallback to the fake.
-- Reviewers use their own key.
+- Provider selected but key missing → the service refuses to start, with a clear error saying to add
+  `MODEL_API_KEY` to `.env` and start again. No silent fallback to the fake.
+- Reviewers use their own key. The fake stays the default and `.env.example` keeps the key blank.
+
+**How it is built [DECIDED 23 Nov 2026, Rakan].**
+- **Plain `httpx`, not the `anthropic` SDK.** Section 12 fixes the dependency list, `httpx` is already
+  there for the test client, and the request is one POST with three headers. The SDK would be the
+  better choice in a real service — retries, streaming, typed errors — and the README says so.
+- One POST to `https://api.anthropic.com/v1/messages` with `x-api-key`, `anthropic-version:
+  2023-06-01` and `content-type: application/json`.
+- **Instructions as the `system` field, the ticket as the only `user` message.** This is L2: prompt
+  structure (instructions kept separate from the ticket data) in the strongest form the API offers —
+  the two are separate fields and never become one string.
+- `MODEL_NAME` is a setting, default **`claude-haiku-4-5`**: a small, cheap model, which is the right
+  size for classifying a short ticket. `MODEL_MAX_TOKENS` is a constant (1024); the reply is one small
+  JSON object.
+- **Which failures are retried.** Timeouts, connection errors, 429 and the 5xx family (including
+  Anthropic's 529 "overloaded") become `ModelUnavailableError`, which the worker retries once (7.4).
+  A 400, 401, 403, 404 or 413 would fail identically next time, so it is raised as itself: retrying a
+  bad key doubles the wasted calls and hides the real problem behind a `model_unavailable` ticket.
+- An unusable response shape (no content, no text block, a refusal) is `ModelUnavailableError` too: a
+  worker must not die because a payload changed shape.
+- **The provider's error text is never repeated back**, in an exception or a log line, because it can
+  echo the request — which contains the ticket — and because the key must not leak.
+
+**Tested with mocked HTTP only [DECIDED 23 Nov 2026, Rakan].** `tests/test_anthropic_provider.py`
+answers every request with `httpx.MockTransport`, so the request shape, the success path and each
+failure path are checked with no network, no key and no cost. **It has never been run against the live
+API.** The tests prove the code matches the documented request format and error behaviour; they cannot
+prove the documentation is right. The README must say this plainly.
 
 ---
 
@@ -855,6 +883,7 @@ All settings are read in one module (`config.py`) from environment variables, wi
 |---|---|---|
 | `MODEL_PROVIDER` | `fake` | which model client to use |
 | `MODEL_API_KEY` | *(unset)* | key for a real provider; required if `MODEL_PROVIDER` is not `fake` |
+| `MODEL_NAME` | `claude-haiku-4-5` | which model to ask for, when the provider is `anthropic` (10.4) |
 | `FAKE_FAILURE_RATE` | `0.1` | share of fake replies that are broken; `0` disables **[DECIDED A24]** |
 | `WORKER_COUNT` | `2` | number of worker loops |
 | `POLL_INTERVAL_SECONDS` | `1` | how often an idle worker checks for pending tickets |
@@ -952,7 +981,8 @@ loura-ticket-classifier/
 │   └── models/
 │       ├── __init__.py        # get_model_client(settings): picks fake or real
 │       ├── base.py            # ModelClient interface + ModelUnavailableError
-│       └── fake.py            # fake model (10.3)
+│       ├── fake.py            # fake model (10.3)
+│       └── anthropic.py       # the real provider, over plain httpx (10.4)
 ├── data/
 │   ├── sample_tickets.json    # the 10 tickets from 1.9, verbatim
 │   └── injection/             # [DECIDED A31] detector data and model, all committed
@@ -967,6 +997,7 @@ loura-ticket-classifier/
     ├── test_db.py             # the storage layer (section 5)
     ├── test_errors.py         # the catch-all 500 handler (6.2)
     ├── test_samples.py        # the sample file and the loader script (Chunk 7)
+    ├── test_anthropic_provider.py  # the real provider, mocked HTTP only (10.4)
     ├── test_models.py         # the model interface, fake model and client choice (section 10)
     ├── test_injection_detector.py  # the detector and its probability-to-points mapping (9.6)
     ├── test_ingest.py

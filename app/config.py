@@ -50,6 +50,16 @@ SUSPICION_REJECT_THRESHOLD = 3
 DETECTOR_STRONG_PROBABILITY = 0.85
 DETECTOR_WEAK_PROBABILITY = 0.65
 
+# --- The real provider (10.4) --------------------------------------------
+# Only used when MODEL_PROVIDER is not "fake".
+
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_VERSION = "2023-06-01"
+
+# The reply is one small JSON object (8.2), so this is generous. A cap is still
+# needed: without one the API rejects the request.
+MODEL_MAX_TOKENS = 1024
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -61,6 +71,7 @@ class Settings:
 
     model_provider: str
     model_api_key: str | None
+    model_name: str
     fake_failure_rate: float
     worker_count: int
     poll_interval_seconds: float
@@ -134,6 +145,7 @@ def load_settings() -> Settings:
     settings = Settings(
         model_provider=_env_str("MODEL_PROVIDER", "fake"),
         model_api_key=os.environ.get("MODEL_API_KEY") or None,
+        model_name=_env_str("MODEL_NAME", "claude-haiku-4-5"),
         fake_failure_rate=_env_float("FAKE_FAILURE_RATE", 0.1),
         worker_count=_env_int("WORKER_COUNT", 2),
         poll_interval_seconds=_env_float("POLL_INTERVAL_SECONDS", 1.0),

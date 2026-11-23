@@ -25,8 +25,8 @@ Update this list at the end of every chunk, so a new session knows where things 
 | 6: workers | done (23 Nov 2026) | `worker.py` + lifespan steps 4-5. A30 answered: unexpected error -> `failed`/`internal_error` (new reason, added to config + CHECK). 40 worker/startup tests, 401 total. API test fixture runs without workers; `test_startup.py` runs the real app with them. |
 | 7: samples end to end | done (23 Nov 2026) | `scripts/load_samples.py` (`--wait` prints the results table). All ten samples match section 15, verified live and as a test. 414 tests. Tagged `core-complete`. |
 | 8: README | not started | |
-| 9: real provider (only if Rakan says so) | not started | |
-| 10: optional extra (only if Rakan says so) | not started | |
+| 9: real provider | done (23 Nov 2026) | `app/models/anthropic.py` over plain httpx, `MODEL_PROVIDER=anthropic`, `MODEL_NAME` default `claude-haiku-4-5`. 39 tests, mocked HTTP only - never run against the live API. 453 total. |
+| 10: optional extra | skipped (Rakan, 23 Nov 2026) | |
 
 ## Commands
 Python on this machine: system Python is 3.9, which is too old. Use Homebrew's `python3.12`

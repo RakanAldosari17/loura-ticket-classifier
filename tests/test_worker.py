@@ -43,6 +43,7 @@ def _settings(**overrides) -> Settings:
     values = {
         "model_provider": "fake",
         "model_api_key": None,
+        "model_name": "claude-haiku-4-5",
         "fake_failure_rate": 0.0,
         "worker_count": 2,
         "poll_interval_seconds": 0.01,

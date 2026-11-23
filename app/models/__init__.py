@@ -5,10 +5,12 @@ provider if one is configured (section 10.4).
 """
 
 from app.config import Settings
+from app.models.anthropic import AnthropicModelClient
 from app.models.base import ModelClient, ModelUnavailableError
 from app.models.fake import FakeModelClient
 
 __all__ = [
+    "AnthropicModelClient",
     "FakeModelClient",
     "ModelClient",
     "ModelUnavailableError",
@@ -31,11 +33,14 @@ def get_model_client(settings: Settings) -> ModelClient:
     if not settings.model_api_key:
         raise ValueError(
             f"MODEL_PROVIDER is {settings.model_provider!r} but MODEL_API_KEY is "
-            "not set. Set MODEL_API_KEY, or set MODEL_PROVIDER=fake to run "
-            "without a real provider."
+            "not set. Add MODEL_API_KEY to your .env and start the service "
+            "again, or set MODEL_PROVIDER=fake to run without a real provider."
         )
+
+    if settings.model_provider == "anthropic":
+        return AnthropicModelClient(settings)
 
     raise ValueError(
         f"MODEL_PROVIDER is {settings.model_provider!r}, which is not supported. "
-        "Only 'fake' is built. See DESIGN.md section 10.4."
+        "Use 'fake' or 'anthropic'. See DESIGN.md section 10.4."
     )
