@@ -24,7 +24,7 @@ Update this list at the end of every chunk, so a new session knows where things 
 | 5: model interface and fake model | done (23 Nov 2026) | `models/base.py` (ModelClient Protocol), `models/fake.py` (rules + 7 broken replies + scripted mode), `models/__init__.py` (get_model_client). Startup key check wired into `main.py`. Timeout decided: enforced by the worker. 38 tests, 354 total. |
 | 6: workers | done (23 Nov 2026) | `worker.py` + lifespan steps 4-5. A30 answered: unexpected error -> `failed`/`internal_error` (new reason, added to config + CHECK). 40 worker/startup tests, 401 total. API test fixture runs without workers; `test_startup.py` runs the real app with them. |
 | 7: samples end to end | done (23 Nov 2026) | `scripts/load_samples.py` (`--wait` prints the results table). All ten samples match section 15, verified live and as a test. 414 tests. Tagged `core-complete`. |
-| 8: README | not started | |
+| 8: README | done (23 Nov 2026) | `README.md` per section 16: defence layers, decisions, conformance table (brief + activity diagram), weaknesses, real-provider switch. Every number verified against the code. **Rakan to edit: the hours in 'Time spent' and the 'AI assistance' line.** |
 | 9: real provider | done (23 Nov 2026) | `app/models/anthropic.py` over plain httpx, `MODEL_PROVIDER=anthropic`, `MODEL_NAME` default `claude-haiku-4-5`. 39 tests, mocked HTTP only - never run against the live API. 453 total. |
 | 10: optional extra | skipped (Rakan, 23 Nov 2026) | |
 
