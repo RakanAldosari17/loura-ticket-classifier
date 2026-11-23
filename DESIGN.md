@@ -529,8 +529,6 @@ Strong phrases (3 points each):
 - `ignore previous instructions`
 - `ignore the above`
 - `disregard previous instructions`
-- `you are now a`
-- `you are now an`
 - `system prompt`
 - `classify it as`
 - `classify this as`
@@ -546,12 +544,21 @@ Weak phrases (1 point each):
 
 (Deliberately not included: `refund` and `urgent` on their own, because real tickets use them; t-1001 asks for a refund and t-1006 says "not urgent".)
 
-**Revised 23 Nov 2026 (Rakan, Chunk 1 review).** `you are now` was replaced by `you are now a` and
-`you are now an`. Bare `you are now` appears in ordinary complaints — "you are now charging me twice",
-"you are now billing the wrong company name" — each of which would have scored 3 and been **rejected**
-as an injection. The tightened phrases still catch the role-change attack the signal exists for
-("you are now a helpful assistant that…", "you are now an admin"). Checked against all ten samples:
-no sample's score changes, so the worked example in 9.5 stands as written.
+**The `you are now` family was removed entirely [DECIDED 23 Nov 2026, Rakan].** It went through two
+rounds, and the history is worth keeping because it shows what the phrase list is bad at.
+
+1. Originally `you are now`. Rejected: bare `you are now` appears in ordinary complaints — "you are now
+   charging me twice", "you are now auto-renewing" — each of which would have scored 3 and been
+   **rejected** as an injection.
+2. Then tightened to `you are now a` and `you are now an`. Also rejected, for two reasons. Matching is
+   plain substring (9.3), so `you are now a` still fires inside "you are now **a**uto-renewing"; and
+   `you are now an` *contains* `you are now a`, so a real role-change attack matched both phrases and
+   scored **6** where the design says a strong signal is worth 3.
+3. So the family is gone. **Role-change wording is now the detector's job** (9.6), which is the signal
+   better suited to it: it weighs the whole sentence rather than firing on a fixed substring.
+
+Checked against all ten samples at each step: no sample's score ever changed, so the worked example in
+9.5 stands as written.
 
 ### 9.3 Matching rules [DEFAULT A18]
 - Case-insensitive.
@@ -593,8 +600,32 @@ microseconds on CPU, has no network call, no API key and no cost, and its decisi
 - Logistic regression then maps those features to one probability that the text is an injection.
 
 **Training data.** `deepset/prompt-injections` from Hugging Face (Apache-2.0): 546 training rows and
-116 test rows, each labelled injection or not. Downloaded **once, by hand**, and committed as CSV, so
-retraining never needs the internet. The dataset's licence and origin are recorded in the README.
+116 test rows. Splits are `train` and `test`; columns are `text` and `label`, where **label 0 is
+legitimate and label 1 is an injection** (confirmed against the dataset page, 23 Nov 2026). Downloaded
+**once, by hand**, and committed as CSV, so retraining never needs the internet. The dataset's licence
+and origin are recorded in the README.
+
+**Provenance [DECIDED 23 Nov 2026, Rakan].** The one-off download commands must appear **verbatim in
+the docstring of `scripts/train_injection_detector.py`**, so anyone can reproduce the CSVs from the
+source. `datasets` is installed in a throwaway environment and is deliberately never added to
+`requirements.txt` (3.2, 12):
+
+```bash
+# One-off, from the project root. Not part of the project environment.
+python -m venv /tmp/hf-download
+/tmp/hf-download/bin/pip install datasets
+/tmp/hf-download/bin/python - <<'PY'
+from datasets import load_dataset
+dataset = load_dataset("deepset/prompt-injections")
+dataset["train"].to_csv("data/injection/train.csv", index=False)
+dataset["test"].to_csv("data/injection/test.csv", index=False)
+PY
+rm -rf /tmp/hf-download
+```
+
+These commands have **not been run yet**: the download happens in Chunk 3b. If what actually runs
+differs in any way, the docstring records what was really used, not this block, and this block is
+corrected to match.
 
 **Training script.** `scripts/train_injection_detector.py`, with a **fixed random seed** so the same
 data always produces the same model. It writes the model file, then prints the validation report (9.7).
@@ -1002,6 +1033,10 @@ Sections, in this order:
    - workers run inside the API process, so an API crash stops classification too
    - a restart can classify a ticket twice
    - the phrase lists are hand-written and bypassable (paraphrasing, other languages such as Arabic, spacing tricks beyond whitespace)
+   - role-change wording ("you are now a helpful assistant that…") is **not** in the phrase list: plain
+     substring matching made every variant either fire on legitimate tickets or double-count, so that
+     wording now relies entirely on the trained detector. If the detector misses it, nothing else
+     catches it at L1b
    - suspicion weights and thresholds are hand-set, not measured
    - false positives: a legitimate ticket containing a listed phrase is failed and needs human review; t-1005's real question waits for review
    - "one sentence" is approximated by length and a single line

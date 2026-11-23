@@ -47,7 +47,7 @@ class Settings:
     """
 
     model_provider: str
-    model_api_key: str | None # 2 modes (real & fake LLM)
+    model_api_key: str | None
     fake_failure_rate: float
     worker_count: int
     poll_interval_seconds: float
