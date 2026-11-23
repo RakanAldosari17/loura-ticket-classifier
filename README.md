@@ -76,9 +76,13 @@ A `failed` ticket always carries a reason:
 | `failure_reason` | Means | Retried? |
 |---|---|---|
 | `suspected_injection` | the ticket text, or the model's summary, scored 3+ | never — a retry gives the attack another go |
-| `model_unavailable` | the model timed out or failed twice | once, after 2 s, before failing |
+| `model_unavailable` | the model timed out or failed twice, **or the provider rejected the request** (a bad key, a malformed request) | once, after 2 s — but a rejection is **not** retried |
 | `invalid_output` | the reply broke a validation rule | never — a broken reply may itself be an injection |
 | `internal_error` | a bug in this code, not the model's fault | never — it would fail the same way for ever |
+
+A rejection carries no detail into the ticket. What an operator needs — the status
+code, and to check `MODEL_API_KEY` — is logged instead, and the key itself never
+reaches a log or an error.
 
 ---
 
@@ -297,9 +301,12 @@ API using `httpx`, which was already a dependency. The instructions go as the
 `system` field and the ticket as the only `user` message — L2 in the strongest form
 the API offers, since the two are separate fields and never become one string.
 Timeouts, connection errors, 429 and 5xx (including 529) become
-`ModelUnavailableError` and get the one retry; 400, 401, 403, 404 and 413 are
-raised as themselves, because retrying a bad key doubles the wasted calls and hides
-the real problem.
+`ModelUnavailableError` and get the one retry. 400, 401, 403, 404 and 413 become
+`ModelRejectedRequestError` — a separate type precisely so the retry cannot catch
+it, since a refused request would be refused again. Such a ticket still ends
+`model_unavailable`, because from its point of view the model was not available to
+classify it; the actionable part (the status code, and to check `MODEL_API_KEY`)
+goes to the log.
 
 > **This provider has never been run against the live API.** It is tested against a
 > mocked HTTP layer only: 39 tests covering the request shape, the success path and

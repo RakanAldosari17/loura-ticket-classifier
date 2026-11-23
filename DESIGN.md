@@ -491,14 +491,19 @@ loop forever:
 Rules:
 - A worker never crashes the loop: any unexpected exception while processing a ticket must be caught,
   logged with the ticket id and the full exception, and must leave that ticket **`failed` with reason
-  `internal_error`** (**[DECIDED A30]**, 4.3). Nothing about the exception is stored.
+  `internal_error`** (**[DECIDED A30]**, 4.3). Nothing about the exception is stored. **The flag from
+  step 1 is kept on this write too** — see the rule below, which has no exceptions.
 - **Every guarded write is checked.** `mark_classified` and `mark_failed` return whether the row was
   actually updated. A `False` means the ticket was no longer `under_review` — a restart reset it and
   someone else has it — so the worker **logs a warning with the ticket id** and does not retry or
   overwrite. Silently ignoring it would hide the one case where two workers overlapped
   **[DECIDED 23 Nov 2026, Rakan]**.
 - The raw model reply is **never** stored in the database.
-- `flagged` from step 1 carries through to the final write, whatever the final status.
+- `flagged` from step 1 carries through to the final write, whatever the final status. **Including the
+  `internal_error` write**, which is why the flag is held in a small object passed into the processing
+  steps rather than a local variable: a local would not be visible to the handler that catches the
+  error, and the flag would be silently lost (fixed 23 Nov 2026 after a diagram-vs-code review found
+  it).
 
 ### 7.5 Why 2 workers [DECIDED] (README text)
 Little's Law: workers needed ≈ arrival rate × time per ticket. Assumed peak of about 3.5 tickets/minute (1,000/day with peaks 5× average) and 1–3 s per hosted-model call (5–10 s on local Ollama) gives 0.1–0.5 tickets in progress, so one worker covers peak load. The second is headroom for retry waits and bursts (500 tickets clear in about 8 minutes). Capped in practice by provider rate limits, laptop compute, and SQLite's single writer. With more time: measure real latency and load-test 1, 2 and 4 workers.
@@ -860,8 +865,15 @@ words.
   JSON object.
 - **Which failures are retried.** Timeouts, connection errors, 429 and the 5xx family (including
   Anthropic's 529 "overloaded") become `ModelUnavailableError`, which the worker retries once (7.4).
-  A 400, 401, 403, 404 or 413 would fail identically next time, so it is raised as itself: retrying a
-  bad key doubles the wasted calls and hides the real problem behind a `model_unavailable` ticket.
+- **Provider rejections [DECIDED 23 Nov 2026, Rakan].** A 400, 401, 403, 404 or 413 means the provider
+  refused the request itself — a bad key, a malformed request, an unknown model name — and would
+  refuse it identically next time. These raise `ModelRejectedRequestError`, a **separate type, not a
+  subclass of `ModelUnavailableError`**, so the worker's retry cannot catch it. The ticket still ends
+  **`model_unavailable`**: from the ticket's point of view the model was not available to classify it,
+  and `internal_error` would wrongly file an operator's mistyped key under "a bug in our code", which
+  is the one reason nobody can act on. The difference is recorded in the **log**, at ERROR, naming the
+  status code and telling the operator to check `MODEL_API_KEY`. The exception carries the status code
+  only: the provider's message can echo the ticket back, and the key must never reach a log.
 - An unusable response shape (no content, no text block, a refusal) is `ModelUnavailableError` too: a
   worker must not die because a payload changed shape.
 - **The provider's error text is never repeated back**, in an exception or a log line, because it can

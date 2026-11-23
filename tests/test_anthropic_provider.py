@@ -18,6 +18,7 @@ import pytest
 from app import classifier
 from app.config import ANTHROPIC_API_URL, ANTHROPIC_VERSION, MODEL_MAX_TOKENS, Settings
 from app.models import AnthropicModelClient, ModelUnavailableError, get_model_client
+from app.models.base import ModelRejectedRequestError
 
 API_KEY = "sk-ant-test-secret-do-not-leak-123456"
 
@@ -262,17 +263,20 @@ def test_an_unusable_response_shape_becomes_model_unavailable(monkeypatch, name,
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 413])
-def test_a_permanent_failure_is_not_a_model_unavailable_error(monkeypatch, status):
+def test_a_permanent_failure_raises_the_rejection_type(monkeypatch, status):
     """A bad key or a malformed request fails identically next time.
 
-    Making these retryable would double every wasted call and bury the real
-    problem behind a `model_unavailable` ticket.
+    It is a separate type from `ModelUnavailableError` precisely so the worker's
+    retry never catches it: the worker turns it into a `model_unavailable`
+    ticket, but only after one attempt, and logs what to fix.
     """
     client = _client_with(lambda r: httpx.Response(status, json={}), monkeypatch)
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(ModelRejectedRequestError) as caught:
         client.classify("i", "t")
 
+    assert caught.value.status_code == status
+    # Not a subclass: if it were, the worker's retry loop would catch it.
     assert not isinstance(caught.value, ModelUnavailableError)
 
 
@@ -302,7 +306,7 @@ def test_the_api_key_never_appears_in_a_log_line(monkeypatch, caplog):
     client = _client_with(handler, monkeypatch)
 
     with caplog.at_level("DEBUG"):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ModelRejectedRequestError):
             client.classify("i", "t")
 
     assert API_KEY not in caplog.text
@@ -317,7 +321,7 @@ def test_the_providers_error_text_is_not_repeated_back(monkeypatch):
 
     client = _client_with(handler, monkeypatch)
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(ModelRejectedRequestError) as caught:
         client.classify("i", secret_ticket)
 
     assert secret_ticket not in str(caught.value)

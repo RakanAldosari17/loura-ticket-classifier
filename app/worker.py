@@ -13,12 +13,31 @@ would freeze the whole process, API included, until it returned.
 
 import asyncio
 import logging
+from dataclasses import dataclass
 
 from app import classifier, db, scoring
 from app.config import Settings
-from app.models.base import ModelClient, ModelUnavailableError
+from app.models.base import (
+    ModelClient,
+    ModelRejectedRequestError,
+    ModelUnavailableError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _Progress:
+    """What has been learned about a ticket so far.
+
+    Exists for one reason: section 7.4 says the flag from step 1 carries through
+    to the final write **whatever the final status**, and that has to include the
+    write made when an unexpected error interrupts processing. A local variable
+    inside `_classify_ticket` is not visible to the handler that catches it, so
+    the flag would be silently lost.
+    """
+
+    flagged: bool = False
 
 
 async def run_workers(settings: Settings, model: ModelClient) -> list[asyncio.Task]:
@@ -85,23 +104,33 @@ async def process_ticket(ticket: dict, settings: Settings, model: ModelClient) -
     waiting for a restart, and cannot send it round the loop again for ever.
     """
     ticket_id = ticket["id"]
+    progress = _Progress()
     try:
-        await _classify_ticket(ticket, settings, model)
+        await _classify_ticket(ticket, settings, model, progress)
     except asyncio.CancelledError:
         # Shutdown mid-ticket. The ticket stays `under_review` and the next
         # startup resets it to `pending` (7.2), so it is not lost.
         raise
     except Exception:
         # A bug in our code, not a model failure. The full exception goes to the
-        # log with the ticket id; nothing about it is stored (A30).
+        # log with the ticket id; nothing about it is stored (A30). The flag
+        # from step 1 is kept: 7.4 says it survives whatever the final status.
         logger.exception("ticket %s: unexpected error while processing", ticket_id)
-        _record(db.mark_failed(ticket_id, "internal_error", False), ticket_id, "failed")
+        _record(
+            db.mark_failed(ticket_id, "internal_error", progress.flagged),
+            ticket_id,
+            "failed",
+        )
 
 
 async def _classify_ticket(
-    ticket: dict, settings: Settings, model: ModelClient
+    ticket: dict, settings: Settings, model: ModelClient, progress: _Progress
 ) -> None:
-    """The six steps of 7.4."""
+    """The six steps of 7.4.
+
+    `progress` carries the flag back out, so that a failure anywhere after step
+    1 still records what step 1 found.
+    """
     ticket_id = ticket["id"]
 
     # Step 1. L1b: ticket suspicion score (input check before the model).
@@ -118,7 +147,7 @@ async def _classify_ticket(
             db.mark_failed(ticket_id, "suspected_injection", True), ticket_id, "failed"
         )
         return
-    flagged = scoring.is_flagged(score)
+    progress.flagged = scoring.is_flagged(score)
 
     # Step 2. L2: prompt structure (instructions kept separate from the ticket).
     instructions = classifier.INSTRUCTIONS
@@ -129,10 +158,28 @@ async def _classify_ticket(
         reply = await _call_model_with_one_retry(
             model, instructions, ticket_text, settings, ticket_id
         )
+    except ModelRejectedRequestError as error:
+        # The provider refused the request: a bad key, a malformed request, an
+        # unknown model name. Not retried, because it would be refused again.
+        # The ticket still ends `model_unavailable` — from its point of view the
+        # model was not available — but the log carries the actionable part.
+        logger.error(
+            "ticket %s: failed, model_unavailable — the provider rejected the "
+            "request with %d. Check MODEL_API_KEY and the request settings; "
+            "this will not be retried.",
+            ticket_id,
+            error.status_code,
+        )
+        _record(
+            db.mark_failed(ticket_id, "model_unavailable", progress.flagged),
+            ticket_id,
+            "failed",
+        )
+        return
     except ModelUnavailableError:
         logger.info("ticket %s: failed, model_unavailable", ticket_id)
         _record(
-            db.mark_failed(ticket_id, "model_unavailable", flagged),
+            db.mark_failed(ticket_id, "model_unavailable", progress.flagged),
             ticket_id,
             "failed",
         )
@@ -145,7 +192,9 @@ async def _classify_ticket(
     except classifier.InvalidOutputError as error:
         logger.info("ticket %s: failed, invalid_output (%s)", ticket_id, error)
         _record(
-            db.mark_failed(ticket_id, "invalid_output", flagged), ticket_id, "failed"
+            db.mark_failed(ticket_id, "invalid_output", progress.flagged),
+            ticket_id,
+            "failed",
         )
         return
 
@@ -162,7 +211,7 @@ async def _classify_ticket(
         )
         return
     if scoring.is_flagged(summary_score):
-        flagged = True
+        progress.flagged = True
 
     # Step 6. The result. `flagged` from step 1 carries through to here.
     logger.info(
@@ -170,11 +219,15 @@ async def _classify_ticket(
         ticket_id,
         result.category,
         result.priority,
-        flagged,
+        progress.flagged,
     )
     _record(
         db.mark_classified(
-            ticket_id, result.category, result.priority, result.summary, flagged
+            ticket_id,
+            result.category,
+            result.priority,
+            result.summary,
+            progress.flagged,
         ),
         ticket_id,
         "classified",

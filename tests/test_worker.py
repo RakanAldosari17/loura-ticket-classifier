@@ -18,6 +18,7 @@ from conftest import run_async
 from app import classifier, db, injection_detector, scoring, worker
 from app.config import Settings
 from app.models import FakeModelClient, ModelUnavailableError
+from app.models.base import ModelRejectedRequestError
 
 VALID_REPLY = (
     '{"category": "billing", "priority": "medium", '
@@ -238,6 +239,91 @@ async def test_a_real_hang_is_cut_off_by_the_timeout(temp_db):
     assert model.calls == 2, "the timeout should apply to the retry too"
 
 
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 413])
+@run_async
+async def test_a_provider_rejection_is_model_unavailable_and_not_retried(
+    temp_db, status
+):
+    """A bad key or a malformed request is the provider refusing us.
+
+    It ends `model_unavailable`, because from the ticket's point of view the
+    model was not available to classify it — but it is never retried, since the
+    same call would be refused the same way.
+    """
+
+    class RejectingModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def classify(self, instructions: str, ticket_text: str) -> str:
+            self.calls += 1
+            raise ModelRejectedRequestError(status)
+
+    db.insert_ticket("t-1001", "Subject", "Body")
+    model = RejectingModel()
+
+    await _process_one(model)
+
+    ticket = db.get_ticket("t-1001")
+    assert ticket["status"] == "failed"
+    assert ticket["failure_reason"] == "model_unavailable"
+    assert model.calls == 1, "a rejected request must not be retried"
+
+
+@run_async
+async def test_a_provider_rejection_is_not_recorded_as_our_bug(temp_db):
+    """It used to end `internal_error`, which means "a bug in our code".
+
+    With a mistyped key every ticket would have been filed under the one reason
+    nobody can act on.
+    """
+
+    class RejectingModel:
+        def classify(self, instructions: str, ticket_text: str) -> str:
+            raise ModelRejectedRequestError(401)
+
+    db.insert_ticket("t-1001", "Subject", "Body")
+
+    await _process_one(RejectingModel())
+
+    assert db.get_ticket("t-1001")["failure_reason"] != "internal_error"
+
+
+@run_async
+async def test_a_provider_rejection_logs_what_the_operator_must_fix(temp_db, caplog):
+    """The status code and the setting to check, and never the key."""
+    key = "sk-ant-secret-value-123456"
+
+    class RejectingModel:
+        def classify(self, instructions: str, ticket_text: str) -> str:
+            raise ModelRejectedRequestError(401)
+
+    db.insert_ticket("t-1001", "Subject", "Body")
+
+    with caplog.at_level("ERROR"):
+        await _process_one(RejectingModel())
+
+    logged = caplog.text
+    assert "t-1001" in logged
+    assert "401" in logged
+    assert "MODEL_API_KEY" in logged
+    assert "not be retried" in logged
+    assert key not in logged
+
+
+@run_async
+async def test_a_provider_rejection_keeps_a_flag_from_step_one(temp_db):
+    db.insert_ticket("t-1001", "Refund", "The refund was approved last week.")
+
+    class RejectingModel:
+        def classify(self, instructions: str, ticket_text: str) -> str:
+            raise ModelRejectedRequestError(400)
+
+    await _process_one(RejectingModel())
+
+    assert db.get_ticket("t-1001")["flagged"] is True
+
+
 # --- the model replying with rubbish: no retry ---------------------------
 
 
@@ -378,6 +464,49 @@ async def test_an_unexpected_error_ends_as_internal_error(temp_db):
     ticket = db.get_ticket("t-1001")
     assert ticket["status"] == "failed"
     assert ticket["failure_reason"] == "internal_error"
+
+
+@run_async
+async def test_an_unexpected_error_keeps_a_flag_from_step_one(temp_db):
+    """Section 7.4: the flag carries through to the final write, whatever the
+    final status — and that has to include the write made when a bug interrupts
+    processing.
+
+    The flag is set in step 1 and the failure happens in step 3, so a flag held
+    only in a local variable would be lost here and the ticket would come back
+    looking clean.
+    """
+
+    class BrokenModel:
+        def classify(self, instructions: str, ticket_text: str) -> str:
+            raise TypeError("a bug after the ticket was already flagged")
+
+    body = "The refund was approved last week."
+    assert scoring.is_flagged(scoring.input_score("Refund", body)), "needs to flag"
+    db.insert_ticket("t-1001", "Refund", body)
+
+    await _process_one(BrokenModel())
+
+    ticket = db.get_ticket("t-1001")
+    assert ticket["failure_reason"] == "internal_error"
+    assert ticket["flagged"] is True, "the flag from step 1 was lost"
+
+
+@run_async
+async def test_an_unflagged_ticket_stays_unflagged_after_an_unexpected_error(temp_db):
+    """The other half: the flag is carried, not invented."""
+
+    class BrokenModel:
+        def classify(self, instructions: str, ticket_text: str) -> str:
+            raise TypeError("a bug")
+
+    db.insert_ticket("t-1001", "Invoice", "My invoice has the wrong name on it.")
+
+    await _process_one(BrokenModel())
+
+    ticket = db.get_ticket("t-1001")
+    assert ticket["failure_reason"] == "internal_error"
+    assert ticket["flagged"] is False
 
 
 @run_async

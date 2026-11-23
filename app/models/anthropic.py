@@ -11,8 +11,9 @@ service — it brings retries, streaming and typed errors — and the README say
 
 Every failure that is worth trying again becomes `ModelUnavailableError`, which
 is the one error the worker retries (7.4 step 3). A failure that would fail again
-identically — a bad key, a malformed request — is raised as itself, because
-retrying it would waste a call and hide the real problem.
+identically — a bad key, a malformed request — becomes `ModelRejectedRequestError`
+instead: the ticket still ends `model_unavailable`, but the call is not repeated
+and the log says what an operator has to fix.
 """
 
 import logging
@@ -25,7 +26,7 @@ from app.config import (
     MODEL_MAX_TOKENS,
     Settings,
 )
-from app.models.base import ModelUnavailableError
+from app.models.base import ModelRejectedRequestError, ModelUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,10 @@ class AnthropicModelClient:
 
         if response.status_code != 200:
             # A bad key or a malformed request fails identically next time, so
-            # it is not a ModelUnavailableError. The provider's message is not
-            # included: it can echo request content back.
-            raise RuntimeError(
-                f"the model rejected the request with {response.status_code}"
-            )
+            # this is not a ModelUnavailableError and is never retried. Only the
+            # status code is carried: the provider's message can echo request
+            # content back, and the key must not reach a log.
+            raise ModelRejectedRequestError(response.status_code)
 
         return _reply_text(response.json())
 
