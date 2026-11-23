@@ -966,6 +966,7 @@ loura-ticket-classifier/
     ├── conftest.py            # temp database per test, scripted fake model, test client
     ├── test_db.py             # the storage layer (section 5)
     ├── test_errors.py         # the catch-all 500 handler (6.2)
+    ├── test_samples.py        # the sample file and the loader script (Chunk 7)
     ├── test_models.py         # the model interface, fake model and client choice (section 10)
     ├── test_injection_detector.py  # the detector and its probability-to-points mapping (9.6)
     ├── test_ingest.py

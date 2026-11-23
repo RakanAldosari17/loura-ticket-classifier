@@ -23,7 +23,7 @@ Update this list at the end of every chunk, so a new session knows where things 
 | 4: prompt and output validation | done (23 Nov 2026) | `classifier.py`: L2 prompt + L3 shape checks. 84 tests, 307 total. A test compares the prompt with DESIGN 10.2 word for word. Open finding: a realistic poisoned summary scores 1-2, so it is flagged not rejected (see Chunk 4 report). |
 | 5: model interface and fake model | done (23 Nov 2026) | `models/base.py` (ModelClient Protocol), `models/fake.py` (rules + 7 broken replies + scripted mode), `models/__init__.py` (get_model_client). Startup key check wired into `main.py`. Timeout decided: enforced by the worker. 38 tests, 354 total. |
 | 6: workers | done (23 Nov 2026) | `worker.py` + lifespan steps 4-5. A30 answered: unexpected error -> `failed`/`internal_error` (new reason, added to config + CHECK). 40 worker/startup tests, 401 total. API test fixture runs without workers; `test_startup.py` runs the real app with them. |
-| 7: samples end to end | not started | |
+| 7: samples end to end | done (23 Nov 2026) | `scripts/load_samples.py` (`--wait` prints the results table). All ten samples match section 15, verified live and as a test. 414 tests. Tagged `core-complete`. |
 | 8: README | not started | |
 | 9: real provider (only if Rakan says so) | not started | |
 | 10: optional extra (only if Rakan says so) | not started | |
