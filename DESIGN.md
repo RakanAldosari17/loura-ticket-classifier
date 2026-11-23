@@ -525,6 +525,19 @@ Summaries are **display-only**: nothing in this system acts on a summary automat
 ## 9. Prompt-injection defences: defence in depth [DECIDED]
 
 ### 9.1 The four levels
+
+**Canonical layer names [DECIDED 23 Nov 2026, Rakan].** These exact names are used in the README, in
+this file, in module and function docstrings and in test names. A bare "L1b" is never written on its
+own; the first mention in any file spells the name out in full.
+
+| Short | Full name |
+|---|---|
+| L1a | **L1a: front door input rules (shape and size checks)** |
+| L1b | **L1b: ticket suspicion score (input check before the model)** |
+| L2 | **L2: prompt structure (instructions kept separate from the ticket data)** |
+| L3 | **L3: output checks (model reply validation and summary suspicion score)** |
+| L4 | **L4: display-only summaries (nothing acts on a summary)** |
+
 | Level | Where | What |
 |---|---|---|
 | **L1 Input rules** | 1a: front door. 1b: worker, before the model | 1a: shape and size limits (4.2). 1b: suspicion score on the ticket text, from **two** signals: the phrase lists (9.2) and the trained detector (9.6) |
@@ -711,6 +724,33 @@ Two conditions must hold, and they are the acceptance test for the detector:
 If a legitimate sample is rejected, **stop and show Rakan the probabilities.** Do not tune the
 cut-offs, the features or the thresholds to make the gate pass: that is fitting the defence to the ten
 examples it will be judged on. The cut-offs in 9.6 are Rakan's decision and only he changes them.
+
+**Measured results, 23 Nov 2026** (116 held-out rows: 60 injections, 56 legitimate). Every row must be
+labelled with the cut-off it uses, because the headline number changes completely between them:
+
+| Cut-off | Meaning | Precision | Recall | F1 | TN | FP | FN | TP |
+|---|---|---|---|---|---|---|---|---|
+| **≥ 0.65** | detected: flagged **or** rejected | 1.000 | 0.550 | 0.710 | 56 | 0 | 27 | 33 |
+| **≥ 0.85** | rejected by the detector alone | 1.000 | 0.100 | 0.182 | 56 | 0 | 54 | 6 |
+| 0.50 | scikit-learn's default, **not a shipped cut-off** | 1.000 | 0.767 | 0.868 | 56 | 0 | 14 | 46 |
+
+Where the 60 test-set injections land:
+
+| Band | Count | Consequence |
+|---|---|---|
+| below 0.65 | 27 | not detected at all; only the phrase list can catch these |
+| 0.65 to < 0.85 | 27 | **flagged, not rejected — these still reach the model** |
+| 0.85 and above | 6 | rejected before the model is called |
+
+**What this means, and the README must say it plainly.** Precision is 1.000 at every cut-off: on this
+test set the detector never flagged a legitimate row. But recall at the reject cut-off is **0.100** —
+it stops 6 injections in 60 on its own. Most reworded attacks it detects score between 0.65 and 0.85,
+so they are **flagged and still sent to the model**. The detector is therefore a **filter, not the
+defence**. What keeps a flagged attack harmless is the structural half of section 9: L2 keeps the
+instructions separate from the ticket data, L3 only ever stores one of the fixed category and priority
+values and re-scores the summary, and L4 means nothing acts on a summary. An attack that reaches the
+model can still only produce `billing`/`technical`/`account`/`other`, one of three priorities, and a
+sentence nobody acts on.
 
 ---
 
@@ -999,6 +1039,9 @@ Build in this order, so the phrase score is finished and tested before the detec
   - timeout then success: one retry, `classified`
   - timeout twice: `failed` / `model_unavailable`
   - invalid output: `failed` / `invalid_output`, and **no retry** (the model was called exactly once)
+  - **a flagged-but-not-rejected attack ticket** (L1b total 1–2, the common case for a reworded attack
+    per 9.7) ends `classified` with a valid `category` and `priority` and `flagged = true`: it reaches
+    the model, and the structural layers keep the result harmless **[DECIDED 23 Nov 2026, Rakan]**
   - poisoned summary scoring ≥ 3: `failed` / `suspected_injection`
   - summary scoring 1–2: `classified` and `flagged`
   - two workers, several tickets: every ticket processed exactly once
@@ -1045,6 +1088,20 @@ Sections, in this order:
 1. **What this is:** two or three sentences.
 2. **How to run** from a clean clone, in the fewest steps (section 12), plus how to load the samples and run the tests.
 3. **How it works:** the three flows in a few lines each, and the status lifecycle.
+3a. **Defence layers [DECIDED 23 Nov 2026, Rakan].** Written for a reader who has never seen this
+   design document, so it must stand alone. A table with exactly these columns and these five rows,
+   using the canonical names from 9.1 verbatim:
+
+   | Layer | Where it runs | What it does |
+   |---|---|---|
+   | L1a: front door input rules (shape and size checks) | `app/schemas.py` | rejects anything that breaks the id pattern or the length limits; nothing invalid is stored |
+   | L1b: ticket suspicion score (input check before the model) | `app/scoring.py`, `app/injection_detector.py` | scores the subject and body with the phrase lists **and** the trained detector; 3+ fails the ticket before the model is called, 1–2 flags it |
+   | L2: prompt structure (instructions kept separate from the ticket data) | `app/classifier.py` | sends the instructions separately and wraps the ticket in `<ticket>` markers, declared as customer data |
+   | L3: output checks (model reply validation and summary suspicion score) | `app/classifier.py`, `app/scoring.py` | only a reply that is one JSON object with an allowed category, an allowed priority and a clean one-line summary is stored; the summary is scored again, phrases only |
+   | L4: display-only summaries (nothing acts on a summary) | the whole system | no code reads a summary and does anything because of it |
+
+   Followed by exactly this point in one sentence: **detection (L1a, L1b, L3's summary score) is a
+   filter; L2, L3's fixed values and L4 are what keep an attack that slips through harmless.**
 4. **Decisions and why**, grouped under Loura's seven open questions (1.5), then extras:
    1. Storage: SQLite
    2. Async execution: worker loops inside the API process, polling the database
@@ -1056,9 +1113,19 @@ Sections, in this order:
       regression), the dataset and its licence, how probability becomes points, why it runs on ticket
       text only and not on the summary, and why the model file is committed. Include the **results
       table copied from the training script's output** (precision, recall, F1, confusion matrix on the
-      116 test rows). State plainly that **detection is a filter, not the defence**: the real
-      protection is that only fixed values can ever be stored, the summary is checked, and summaries
-      are display-only.
+      116 test rows). The table must have **one row per cut-off, each labelled with the cut-off it
+      uses** (9.7): `≥ 0.65` (detected: flagged or rejected), `≥ 0.85` (rejected by the detector
+      alone), and optionally the `0.50` scikit-learn default **only if labelled as not a shipped
+      cut-off**. An unlabelled headline number would be misleading, because recall is 0.550 at one
+      cut-off and 0.100 at the other.
+
+      Then state plainly, in the README's own words: **most reworded attacks the detector catches
+      score between 0.65 and 0.85, so they are flagged, not rejected. They still reach the model.**
+      27 of the 60 test-set injections land in that band and 27 more are not detected at all; only 6
+      are rejected by the detector alone. What keeps those tickets harmless is **not** the detector
+      but the structural layers: L2 keeps the instructions separate from the ticket data, L3 stores
+      only the fixed category and priority values and re-scores the summary, and L4 means nothing
+      acts on a summary. So: **detection is a filter, not the defence.**
    7. API shape: endpoints, status codes, error format
    - Extras: duplicates rejected (first wins); input limits in characters; empty subjects allowed; the list shows all tickets with status, flag and status filters; page numbers 20/100; `under_review` visible; the internal-callers assumption; fake model by default.
 5. **With more time** (Rakan's list):

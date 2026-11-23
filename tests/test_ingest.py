@@ -1,5 +1,7 @@
 """Tests for submitting a ticket: input rules, duplicates, what gets stored.
 
+Covers L1a: front door input rules (shape and size checks).
+
 The promise this file checks is the one the front door makes: a request that
 breaks any rule in section 4.2 is rejected, and **nothing is stored**.
 """

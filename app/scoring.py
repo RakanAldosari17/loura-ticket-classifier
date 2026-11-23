@@ -1,5 +1,9 @@
 """The suspicion score and its phrase lists (section 9 of DESIGN.md).
 
+This module serves two layers: L1b: ticket suspicion score (input check before
+the model), and the summary half of L3: output checks (model reply validation
+and summary suspicion score).
+
 One scoring function, used twice: on the ticket text before the model is called,
 and on the summary the model returns.
 
@@ -73,7 +77,7 @@ def phrase_score(text: str) -> int:
 
 
 def input_score(subject: str, body: str) -> int:
-    """The L1b score for a ticket: phrases plus the trained detector (9.4, 9.6).
+    """L1b: ticket suspicion score (input check before the model), 9.4 and 9.6.
 
     Two independent signals adding into one total. Either can reach 3 on its
     own, so a ticket the phrase list never anticipated can still be rejected by

@@ -1,5 +1,8 @@
 """Loads the trained injection detector and scores text with it (9.6).
 
+This module is the trained half of L1b: ticket suspicion score (input check
+before the model). The phrase half lives in `scoring.py`.
+
 This module owns the model file: where it is, loading it once, and turning a
 probability into suspicion points. It knows nothing about tickets or workers,
 and `scoring.py` adds its points to the same total as the phrase points.

@@ -1,14 +1,20 @@
 """Tests for the detector and its probability-to-points mapping (9.6, 9.7).
 
+Covers the trained half of L1b: ticket suspicion score (input check before the
+model).
+
 These run against the **committed** model file, which is the same file the
 service loads. So a retrained model that behaved differently on the samples
 would be caught here rather than in production.
 """
 
+import csv
 import json
 from pathlib import Path
 
+import joblib
 import pytest
+from sklearn.metrics import precision_recall_fscore_support
 
 from app import config, injection_detector, scoring
 
@@ -147,6 +153,70 @@ def test_no_legitimate_sample_is_even_flagged(ticket_id):
     score = scoring.input_score(ticket["subject"], ticket["body"])
 
     assert score == 0, f"{ticket_id} scored {score}"
+
+
+# --- the numbers the README publishes ------------------------------------
+
+
+def test_the_published_test_set_metrics_still_hold():
+    """Pins the results table in 9.7 and the README.
+
+    Precision is 1.000 at both shipped cut-offs, but recall is 0.550 at the flag
+    cut-off and only 0.100 at the reject cut-off. Those numbers are published, so
+    a retrained model that changed them would make the README wrong with nothing
+    to say so.
+    """
+    rows = list(
+        csv.DictReader(injection_detector.TEST_CSV.open(newline="", encoding="utf-8"))
+    )
+    texts = [row["text"] for row in rows]
+    labels = [int(row["label"]) for row in rows]
+    model = joblib.load(injection_detector.DETECTOR_PATH)
+    probabilities = [float(p[1]) for p in model.predict_proba(texts)]
+
+    expected = {
+        config.DETECTOR_WEAK_PROBABILITY: (1.000, 0.550),
+        config.DETECTOR_STRONG_PROBABILITY: (1.000, 0.100),
+    }
+    for cut_off, (want_precision, want_recall) in expected.items():
+        predicted = [1 if p >= cut_off else 0 for p in probabilities]
+        precision, recall, _, _ = precision_recall_fscore_support(
+            labels, predicted, average="binary", pos_label=1, zero_division=0
+        )
+        assert round(precision, 3) == want_precision, cut_off
+        assert round(recall, 3) == want_recall, cut_off
+
+
+def test_most_detected_attacks_are_only_flagged_not_rejected():
+    """The honest headline: the detector is a filter, not the defence.
+
+    Of the 60 injections in the held-out test set, 27 are not detected at all,
+    27 land between the two cut-offs and are only flagged — so they still reach
+    the model — and just 6 are rejected by the detector alone. What keeps the
+    flagged ones harmless is L2, L3's fixed values and L4, not this model.
+    """
+    rows = list(
+        csv.DictReader(injection_detector.TEST_CSV.open(newline="", encoding="utf-8"))
+    )
+    model = joblib.load(injection_detector.DETECTOR_PATH)
+    injections = [
+        float(model.predict_proba([row["text"]])[0][1])
+        for row in rows
+        if int(row["label"]) == 1
+    ]
+
+    missed = sum(1 for p in injections if p < config.DETECTOR_WEAK_PROBABILITY)
+    flagged_only = sum(
+        1
+        for p in injections
+        if config.DETECTOR_WEAK_PROBABILITY <= p < config.DETECTOR_STRONG_PROBABILITY
+    )
+    rejected = sum(1 for p in injections if p >= config.DETECTOR_STRONG_PROBABILITY)
+
+    assert (missed, flagged_only, rejected) == (27, 27, 6)
+    assert len(injections) == 60
+    # The point: flagged-only is far larger than rejected.
+    assert flagged_only > rejected
 
 
 # --- what the detector adds over the phrase list -------------------------

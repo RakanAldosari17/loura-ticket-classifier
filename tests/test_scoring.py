@@ -1,4 +1,9 @@
-"""Tests for the suspicion score and its matching rules."""
+"""Tests for the suspicion score and its matching rules.
+
+Covers the phrase half of L1b: ticket suspicion score (input check before the
+model), and the same function as used by L3: output checks (model reply
+validation and summary suspicion score).
+"""
 
 import json
 from pathlib import Path
