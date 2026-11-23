@@ -6,8 +6,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Local database files (the database is created on first run)
+# Local database files (the database is created on first run).
+# WAL mode keeps two side files next to the database while the service is
+# running, so they are ignored too. The detector's data and model file live in
+# data/injection/ and are deliberately NOT ignored: they are committed.
 data/*.db
+data/*.db-wal
+data/*.db-shm
 
 # Secrets: never committed
 .env

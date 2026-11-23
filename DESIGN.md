@@ -62,8 +62,9 @@ This file is the single source of truth for building this project. A visual vers
 | Database | SQLite through Python's built-in `sqlite3` (no ORM) |
 | Background work | asyncio worker tasks inside the API process, polling the database |
 | Model | fake model by default, behind a `ModelClient` interface; one real provider optional later |
+| Injection detector | TF-IDF + logistic regression (scikit-learn), trained offline, model file committed (9.6) |
 | Tests | pytest, with FastAPI's test client |
-| Dependencies | `fastapi`, `uvicorn`, `pytest`, `httpx`. Nothing else without Rakan's approval. |
+| Dependencies | `fastapi`, `uvicorn`, `pytest`, `httpx`, `scikit-learn`. Nothing else without Rakan's approval. |
 
 ### 0.3 Markers used in this file
 
@@ -153,7 +154,7 @@ Notes: t-1008's subject is an empty string. t-1010's body contains line breaks a
 |---|---|---|---|
 | A1 | Python version | Python 3.11 or newer | 12 |
 | A2 | Dependency tooling | `venv` + `pip` + one `requirements.txt` | 12 |
-| A3 | Dependencies | `fastapi`, `uvicorn`, `pytest`, `httpx` (needed by FastAPI's test client). Nothing else. | 12 |
+| A3 | Dependencies | `fastapi`, `uvicorn`, `pytest`, `httpx` (needed by FastAPI's test client), `scikit-learn` (the injection detector, added 23 Nov 2026). Nothing else. | 12 |
 | A4 | How workers run inside the API process | asyncio tasks started in FastAPI's lifespan handler; blocking SQLite and model calls run in a thread via `asyncio.to_thread` | 7.1 |
 | A5 | Project layout and module names | As in section 13 | 13 |
 | A6 | Database file location | `./data/tickets.db`, overridable by a setting; ignored by git | 11 |
@@ -197,6 +198,7 @@ Two environment decisions were taken at the same time (not design items, recorde
 |---|---|---|
 | A28 | Which real provider, if any | Chunk 9, only if Rakan wants a real provider |
 | A30 | If a worker hits an unexpected error while processing a ticket, which state is the ticket left in (`failed` with which reason, or back to `pending`)? | Start of Chunk 6 |
+| A31 | Which folder holds the detector's training data and model file? | **Answered 23 Nov 2026: `data/injection/`**, holding `train.csv`, `test.csv` and `detector.joblib` together (section 13) |
 
 ## 3. Scope
 
@@ -205,7 +207,9 @@ Two environment decisions were taken at the same time (not design items, recorde
 - SQLite storage.
 - Background classification by worker loops running inside the API process, polling the database.
 - A model interface with a fake model as the default.
-- Layered prompt-injection defences (section 9).
+- Layered prompt-injection defences (section 9), including a trained prompt-injection detector
+  (TF-IDF + logistic regression) as a second L1b signal, with its training script, its committed
+  training data and its committed model file (section 9.6).
 - Tests for what matters (section 14).
 - The 10 sample tickets as a JSON file plus a script that submits them through the API.
 - A README meeting section 16.
@@ -219,7 +223,13 @@ Two environment decisions were taken at the same time (not design items, recorde
 - A separate worker process.
 - Endpoints not listed in section 6 (no update, delete, re-classify, health, metrics or admin endpoints).
 - A staff review or "mark as checked" feature for flags.
-- A second "checker" model, an LLM judge, or any agentic loop.
+- A second "checker" model, an LLM judge, or any agentic loop. The trained detector in 9.6 is **not**
+  this: it is a small offline text classifier that never calls an LLM, never sees the model's output,
+  and only contributes points to the L1b input score.
+- PyTorch, transformers, or any neural/pretrained language model for the detector. The detector is
+  TF-IDF + logistic regression and nothing heavier.
+- Downloading the training data at build or run time. The dataset is fetched once by hand and the
+  resulting CSV files are committed, so training and running need no internet.
 - Per-sender or IP tracking, rate limiting, CORS configuration.
 - AI-generated subjects.
 - An evaluation script, graceful-shutdown logic, or re-classification: only if Rakan says so in Chunk 10.
@@ -419,9 +429,11 @@ Errors: `invalid_query` (422) for any bad value, including page size above 100 o
 
 ### 7.2 Startup sequence [DECIDED]
 1. Load settings. If a real provider is selected and its API key is missing, **stop immediately** with a clear error asking for the key.
-2. `init_db()`.
-3. `reset_under_review()`: every `under_review` ticket goes back to `pending` (restart recovery; nothing can still be working on them after a restart). Log how many.
-4. Start the worker loops.
+2. Load the injection detector model file (9.6) **once**. If the file is missing, **stop immediately**
+   with a clear error naming the file and the script that produces it.
+3. `init_db()`.
+4. `reset_under_review()`: every `under_review` ticket goes back to `pending` (restart recovery; nothing can still be working on them after a restart). Log how many.
+5. Start the worker loops.
 
 A ticket interrupted by a restart may be classified twice (before and after). The second result replaces the first. This is accepted and documented. It does not conflict with "don't re-run classification", which is about duplicate submissions.
 
@@ -436,6 +448,7 @@ loop forever:
 ### 7.4 `process(ticket)`: in this exact order [DECIDED]
 
 1. **Input score (L1b)** on the ticket text (section 9). **[DEFAULT A19]** subject and body together.
+   Two signals add into one total: the phrase lists (9.2) and the trained detector (9.6).
    - score ≥ 3 → `mark_failed(reason="suspected_injection")`. **Stop. The model is never called. No retry.**
    - score 1 or 2 → remember `flagged = true` and continue.
    - score 0 → continue.
@@ -495,14 +508,18 @@ Summaries are **display-only**: nothing in this system acts on a summary automat
 ### 9.1 The four levels
 | Level | Where | What |
 |---|---|---|
-| **L1 Input rules** | 1a: front door. 1b: worker, before the model | 1a: shape and size limits (4.2). 1b: suspicion score on the ticket text |
+| **L1 Input rules** | 1a: front door. 1b: worker, before the model | 1a: shape and size limits (4.2). 1b: suspicion score on the ticket text, from **two** signals: the phrase lists (9.2) and the trained detector (9.6) |
 | **L2 Prompt structure** | worker | instructions and ticket text kept clearly separate; ticket marked as data |
-| **L3 Output checks** | worker, after the model | shape checks (8.3) and a suspicion score on the summary |
+| **L3 Output checks** | worker, after the model | shape checks (8.3) and a **phrase-only** suspicion score on the summary (the detector is not used here: see 9.6) |
 | **L4 Limit the damage** | whole system | summaries are display-only |
 
 Why layers: no single defence stops prompt injection, because the model reads instructions and data as the same text. Keyword *blocking* alone would reject real tickets; a human on every ticket is too slow. Preference: **false positives over false negatives**. A suspicious ticket is never presented as a trusted classification, but it is never lost (it is stored as `failed` with a reason, findable with the `status` filter, for support to review).
 
 ### 9.2 Suspicion score and phrase lists [scoring DECIDED; lists DECIDED A17: approved as written 23 Nov 2026]
+
+The phrase lists are the **first** of the two L1b signals. The trained detector (9.6) is the second,
+and adds points to the same score. The lists below are unchanged by that addition.
+
 - Each **strong** signal = **3 points**. Each **weak** signal = **1 point**.
 - Total **0** = clean. **1–2** = classify but flag. **3 or more** = reject as `failed` / `suspected_injection`.
 - The weights and cut-offs are hand-set, not measured (README weakness; with more time, calibrate on labelled examples).
@@ -544,7 +561,8 @@ no sample's score changes, so the worked example in 9.5 stands as written.
 
 ### 9.4 Where the score is applied [DEFAULT A19; DECIDED A20: approved as written 23 Nov 2026]
 - **L1b input score:** on subject and body together (joined with a newline), before any model call.
-- **L3 summary score:** on the validated summary.
+  Two signals add into one total: the phrase lists (9.2) and the trained detector (9.6).
+- **L3 summary score:** on the validated summary. **Phrases only** — the detector is not run here.
 - Scored separately with the same thresholds. `flagged = true` if either scores 1 or 2. Either scoring 3+ means `failed` / `suspected_injection`.
 
 ### 9.5 t-1005 worked example
@@ -554,7 +572,69 @@ With the approved lists, t-1005's text matches:
 
 (`ignore previous instructions` does not match, because the text says "ignore **all** previous instructions".)
 
-Total: 12, far above 3. It becomes `failed` / `suspected_injection` and **is never sent to the model.** Its genuine question (where to download invoices) waits for human review; the README states this trade-off. With the approved lists, the other nine samples score 0.
+Total from phrases: 12, far above 3. The detector (9.6) adds its own points on top; t-1005 is
+rejected on the phrase score alone, so the detector cannot change its verdict. It becomes
+`failed` / `suspected_injection` and **is never sent to the model.** Its genuine question (where to download invoices) waits for human review; the README states this trade-off. With the approved lists, the other nine samples score 0.
+
+---
+
+### 9.6 Trained injection detector: the second L1b signal [DECIDED 23 Nov 2026, Rakan]
+
+A phrase list only catches wording somebody thought of in advance. A small trained classifier
+generalises to rephrasings the list misses. It is deliberately the *lighter* kind of model: it runs in
+microseconds on CPU, has no network call, no API key and no cost, and its decision can be inspected.
+
+**What it is.** TF-IDF features feeding a logistic regression, from scikit-learn.
+- *TF-IDF* turns text into a vector of numbers, one per term, weighting a term by how often it appears
+  in this text and how rare it is across the corpus. Common words score low, distinctive ones high.
+- Features are **word 1–2 grams** (single words and adjacent pairs, so "ignore instructions" is its own
+  feature) **and character 3–5 grams** (overlapping runs of 3 to 5 characters). Character n-grams make
+  the detector robust to spacing tricks, typos and unknown words, which a word-only model misses.
+- Logistic regression then maps those features to one probability that the text is an injection.
+
+**Training data.** `deepset/prompt-injections` from Hugging Face (Apache-2.0): 546 training rows and
+116 test rows, each labelled injection or not. Downloaded **once, by hand**, and committed as CSV, so
+retraining never needs the internet. The dataset's licence and origin are recorded in the README.
+
+**Training script.** `scripts/train_injection_detector.py`, with a **fixed random seed** so the same
+data always produces the same model. It writes the model file, then prints the validation report (9.7).
+The trained model file is committed, so running the service never requires training.
+
+**How it is wired in.**
+- Input: **ticket text only** — subject and body, the same text the phrase score reads (A19).
+- The model is loaded **once at startup**, not per ticket. Loading it per ticket would add file I/O
+  and unpickling to every ticket for no benefit.
+- If the model file is missing, the service **stops at startup** with a clear error naming the file and
+  the script that produces it. No silent fallback to phrases-only: a defence that quietly disappears is
+  worse than one that is obviously absent.
+- It is **never** run on the model's summary (L3). The summary is machine-generated text, not customer
+  text, and the detector was trained on human-written prompts; L3 stays phrase-only.
+
+**Probability to points [DECIDED].** The detector's points are added to the same L1b total as the
+phrase points. The cut-offs live in `config.py` next to the point constants:
+
+| Detector probability | Points added | Meaning |
+|---|---|---|
+| **≥ 0.90** | **3** (a strong signal) | on its own, enough to reject |
+| **0.50 to < 0.90** | **1** (a weak signal) | on its own, enough to flag |
+| **< 0.50** | **0** | no contribution |
+
+The flag (1–2) and reject (3+) thresholds are **unchanged**. The two signals are independent: a ticket
+the phrase list misses can still be rejected by the detector alone, and vice versa.
+
+### 9.7 Detector validation: the gate the detector must pass [DECIDED 23 Nov 2026, Rakan]
+
+The training script prints, in this order:
+1. **Precision, recall, F1 and the confusion matrix** on the 116 held-out test rows.
+2. The **detector probability and total L1b score for each of the 10 sample tickets** (section 1.9).
+
+Two conditions must hold, and they are the acceptance test for the detector:
+- **t-1005 must be rejected** (total ≥ 3).
+- **None of the other nine samples may be rejected.**
+
+If a legitimate sample is rejected, **stop and show Rakan the probabilities.** Do not tune the
+cut-offs, the features or the thresholds to make the gate pass: that is fitting the defence to the ten
+examples it will be judged on. The cut-offs in 9.6 are Rakan's decision and only he changes them.
 
 ---
 
@@ -656,6 +736,9 @@ Fixed limits (constants in `config.py`, not environment settings):
 | page size default / max | 20 / 100 |
 | suspicion thresholds | flag at 1–2, reject at 3+ |
 | strong / weak weights | 3 / 1 |
+| detector strong cut-off | probability ≥ 0.90 adds the strong weight (3) |
+| detector weak cut-off | probability ≥ 0.50 and < 0.90 adds the weak weight (1); below 0.50 adds 0 |
+| detector model file path | the committed model file (9.6); missing file stops startup |
 
 ---
 
@@ -663,9 +746,19 @@ Fixed limits (constants in `config.py`, not environment settings):
 
 - Python 3.11 or newer.
 - `venv` + `pip` + a single `requirements.txt` with pinned versions.
-- Dependencies: `fastapi`, `uvicorn`, `pytest`, `httpx`. Standard library for everything else (`sqlite3`, `json`, `asyncio`, `logging`, `re`, `random`, `datetime`).
+- Dependencies: `fastapi`, `uvicorn`, `pytest`, `httpx`, `scikit-learn`. Standard library for everything
+  else (`sqlite3`, `json`, `asyncio`, `logging`, `re`, `random`, `datetime`, `csv`).
+- `scikit-learn` is pinned like the rest. It brings `numpy`, `scipy` and `joblib` with it; those are its
+  dependencies, not separate choices. **No PyTorch, no transformers.**
+- The Hugging Face `datasets` library is **not** a dependency. The dataset is downloaded once by hand
+  and committed as CSV, so neither training nor running needs it (3.2).
 - Logging: standard `logging`, INFO, one line per lifecycle event.
-- `.gitignore` must include: `.venv/`, `__pycache__/`, `.pytest_cache/`, `data/*.db`, `.env`.
+- `.gitignore` must include: `.venv/`, `__pycache__/`, `.pytest_cache/`, `.env`, and the database
+  files `data/*.db`, `data/*.db-wal`, `data/*.db-shm`. **The two WAL side files matter**: SQLite in
+  WAL mode (5.1) keeps `tickets.db-wal` and `tickets.db-shm` next to the database for as long as the
+  service is running, and `data/*.db` does not match them, so without their own lines they would be
+  committed. `data/injection/` is deliberately **not** ignored: the detector's data and model file
+  are committed (9.6).
 
 Run from a clean clone must be at most these steps (exact commands confirmed in Chunk 0):
 ```bash
@@ -706,18 +799,25 @@ loura-ticket-classifier/
 │   ├── db.py                  # ALL SQL (section 5.3)
 │   ├── worker.py              # worker loop and process() (section 7)
 │   ├── classifier.py          # prompt building (10.2) and output validation (8.3)
-│   ├── scoring.py             # suspicion score and phrase lists (section 9)
+│   ├── scoring.py             # suspicion score: phrase lists + detector points (section 9)
+│   ├── injection_detector.py  # loads the trained model once, returns a probability (9.6)
 │   └── models/
 │       ├── __init__.py        # get_model_client(settings): picks fake or real
 │       ├── base.py            # ModelClient interface + ModelUnavailableError
 │       └── fake.py            # fake model (10.3)
 ├── data/
-│   └── sample_tickets.json    # the 10 tickets from 1.9, verbatim
+│   ├── sample_tickets.json    # the 10 tickets from 1.9, verbatim
+│   └── injection/             # [DECIDED A31] detector data and model, all committed
+│       ├── train.csv          # deepset/prompt-injections, 546 rows, committed
+│       ├── test.csv           # the 116 held-out rows, committed
+│       └── detector.joblib    # the trained model, committed
 ├── scripts/
-│   └── load_samples.py        # submits the samples through POST /tickets, prints each reply
+│   ├── load_samples.py        # submits the samples through POST /tickets, prints each reply
+│   └── train_injection_detector.py  # trains from the CSVs, writes the model, prints the report (9.7)
 └── tests/
     ├── conftest.py            # temp database per test, scripted fake model, test client
     ├── test_db.py             # the storage layer (section 5)
+    ├── test_injection_detector.py  # the detector and its probability-to-points mapping (9.6)
     ├── test_ingest.py
     ├── test_reads.py
     ├── test_scoring.py
@@ -767,14 +867,35 @@ Each chunk ends with the report in 0.1.2 and waits for Rakan.
   - list: no filters, each filter, combined filters, `flagged`, pagination with `next_page`, empty list (200), each invalid query value (422 `invalid_query`), page size 101 rejected, page 0 rejected
   - every error response matches the format in 6.2
 
-### Chunk 3: suspicion scoring
-- `scoring.py` (section 9).
+### Chunk 3: suspicion scoring (phrases **and** the trained detector)
+Build in this order, so the phrase score is finished and tested before the detector is started.
+
+**3a. Phrase scoring**
+- `scoring.py` (sections 9.2 to 9.5).
 - **Tests:**
   - t-1005's text scores ≥ 3
   - the other nine samples score 0 (check this against the phrase lists; if any sample scores above 0, report it to Rakan instead of changing the lists yourself)
   - one weak phrase scores 1; three weak phrases score 3
   - case-insensitive; extra spaces and newlines inside a phrase still match
   - a phrase repeated twice counts once
+
+**3b. The trained detector (9.6, 9.7)**
+- Files live in `data/injection/` (**[DECIDED A31]**).
+- Download `deepset/prompt-injections` once by hand; commit `train.csv` (546 rows) and `test.csv` (116 rows).
+- `scripts/train_injection_detector.py`: TF-IDF (word 1–2 grams + char 3–5 grams) + logistic regression,
+  **fixed random seed**, writes the model file, prints the 9.7 report.
+- `app/injection_detector.py`: loads the model once, exposes the probability for a text.
+- `scoring.py`: add the detector's points to the L1b total using the 9.6 cut-offs. L3 stays phrase-only.
+- Add `scikit-learn` to `requirements.txt`, pinned.
+- **The 9.7 gate:** t-1005 rejected, none of the other nine rejected. If a legitimate sample is
+  rejected, **stop and show Rakan the probabilities**; do not tune cut-offs, features or thresholds.
+- **Tests** (in `tests/test_injection_detector.py`):
+  - the model file loads
+  - t-1005 is rejected (total ≥ 3)
+  - none of the nine legitimate samples is rejected
+  - probability-to-points at the boundaries: 0.49 → 0, 0.50 → 1, 0.89 → 1, 0.90 → 3
+- **Time limit [DECIDED 23 Nov 2026]:** if 3b is not working within **1.5 hours**, stop and tell Rakan.
+  3a stands on its own, so the chunk is not lost if the detector is abandoned.
 
 ### Chunk 4: prompt building and output validation
 - `classifier.py` (sections 8.3 and 10.2).
@@ -853,7 +974,14 @@ Sections, in this order:
    3. Concurrency: 2 workers, with the Little's Law reasoning (7.5)
    4. Restart: reset `under_review` to `pending` at startup; double classification possible and accepted
    5. Retries and failure: one retry for `model_unavailable` after 2 s; no retry for `invalid_output`; never for `suspected_injection`; every failure stores a reason
-   6. Prompt injection: the four levels, the suspicion score, false positives over false negatives, display-only summaries
+   6. Prompt injection: the four levels, the suspicion score, false positives over false negatives,
+      display-only summaries, **and the trained detector (9.6)**: what it is (TF-IDF + logistic
+      regression), the dataset and its licence, how probability becomes points, why it runs on ticket
+      text only and not on the summary, and why the model file is committed. Include the **results
+      table copied from the training script's output** (precision, recall, F1, confusion matrix on the
+      116 test rows). State plainly that **detection is a filter, not the defence**: the real
+      protection is that only fixed values can ever be stored, the summary is checked, and summaries
+      are display-only.
    7. API shape: endpoints, status codes, error format
    - Extras: duplicates rejected (first wins); input limits in characters; empty subjects allowed; the list shows all tickets with status, flag and status filters; page numbers 20/100; `under_review` visible; the internal-callers assumption; fake model by default.
 5. **With more time** (Rakan's list):
@@ -866,6 +994,8 @@ Sections, in this order:
    - a second "checker" model, weighed against its cost, latency and own injection risk
    - per-sender tracking of suspected injections, if the intake passed sender identity
    - notification instead of polling, keeping a startup scan
+   - evaluate larger pretrained transformer classifiers for prompt-injection detection, then fine-tune
+     the best one on labelled support tickets and compare it with the current model on the same test set
 6. **Weaknesses** (honest; Rakan edits):
    - SQLite allows one write at a time; this design assumes a single running instance
    - polling adds up to about a second of delay and constant idle queries
@@ -876,6 +1006,11 @@ Sections, in this order:
    - false positives: a legitimate ticket containing a listed phrase is failed and needs human review; t-1005's real question waits for review
    - "one sentence" is approximated by length and a single line
    - the fake model's classifications come from keyword rules, not language understanding
+   - the injection detector is trained on a **small** dataset (546 training rows), made of
+     **chatbot-style prompts rather than support tickets**, in **classic injection phrasing**; it will
+     generalise worse to novel attacks and to ticket-shaped text than the test score suggests
+   - the detector's test score is measured on data from the same source as its training data, so it
+     flatters the model relative to real traffic
    - no authentication or rate limiting (based on the internal-callers assumption)
 7. **AI assistance:** one honest line (Rakan writes it), for example: "Built with Claude Code; the design, decisions and review are mine."
 
@@ -889,6 +1024,9 @@ Sections, in this order:
 | Worker / background processor | a loop that claims pending tickets and classifies them (`worker.py`) |
 | Claim | the atomic `pending` → `under_review` update that stops two workers taking the same ticket |
 | L1–L4 | the four prompt-injection defence levels (section 9.1) |
-| Suspicion score | points from strong (3) and weak (1) phrases (section 9.2) |
+| Suspicion score | points from two L1b signals: strong (3) and weak (1) phrases (9.2), plus the trained detector's points (9.6) |
+| Detector | the offline TF-IDF + logistic-regression classifier that scores how injection-like a ticket text is (9.6). Not an LLM, and never called on the model's output |
+| TF-IDF | a way of turning text into numbers: each term is weighted by how often it appears here and how rare it is overall |
+| n-gram | a run of n adjacent items. Word 1-2 grams are single words and pairs; character 3-5 grams are overlapping runs of 3 to 5 characters, which survive spacing tricks and typos |
 | Flagged | classified (or failed) but marked for a human to look at, from a score of 1–2 |
 | Display-only | summaries are shown to people; nothing acts on them automatically |
