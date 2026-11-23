@@ -4,10 +4,11 @@ Run from the project root:
 
     python scripts/train_injection_detector.py
 
-It reads the committed CSVs, trains with a fixed seed, writes the model file,
-then prints the test-set report and the score for each of the ten sample
-tickets. The model file is committed, so running the service never needs this
-script; it exists so the model can be rebuilt and checked.
+It reads the committed CSVs, trains with a fixed seed, prints the test-set
+report and the score for each of the ten sample tickets, checks the gate in 9.7,
+and writes the model file **only if the gate passes**. A failed run leaves the
+existing model untouched. The model file is committed, so running the service
+never needs this script; it exists so the model can be rebuilt and checked.
 
 --- Provenance of the training data -----------------------------------------
 
@@ -64,6 +65,18 @@ from app.injection_detector import (  # noqa: E402
 # difference 0.0). The saved .joblib files are not byte-identical, which is a
 # detail of how joblib serialises, not a difference in the model.
 RANDOM_SEED = 42
+
+
+def _display(path: Path) -> str:
+    """Show a path relative to the project when it is inside it.
+
+    `Path.relative_to` raises for anything outside the project, so a model file
+    configured elsewhere would crash the script on its own progress message.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def load_rows(path: Path) -> tuple[list[str], list[int]]:
@@ -166,16 +179,19 @@ def report_samples(model: Pipeline) -> list[str]:
 
 
 def main() -> int:
-    """Train, save, report, and check the gate in 9.7."""
+    """Train, report, check the gate in 9.7, and only then save.
+
+    The order matters: the model is written **after** the gate passes, never
+    before. A failed run leaves the existing `detector.joblib` exactly as it
+    was, so a bad retrain cannot replace a good model that the service and the
+    tests depend on. The alternative — save first, report afterwards — would
+    leave the service running a model that just failed its own checks.
+    """
     texts, labels = load_rows(TRAIN_CSV)
-    print(f"Training on {len(texts)} rows from {TRAIN_CSV.relative_to(ROOT)}")
+    print(f"Training on {len(texts)} rows from {_display(TRAIN_CSV)}")
 
     model = build_model()
     model.fit(texts, labels)
-
-    DETECTOR_PATH.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, DETECTOR_PATH)
-    print(f"Model written to {DETECTOR_PATH.relative_to(ROOT)}")
 
     report_test_set(model)
     problems = report_samples(model)
@@ -184,12 +200,16 @@ def main() -> int:
     if problems:
         print("GATE FAILED (9.7):", ", ".join(problems))
         print(
-            "Stop and show Rakan the probabilities above. Do not tune the"
-            " cut-offs, the features or the thresholds to make this pass."
+            "Do not tune the cut-offs, features or thresholds to make this"
+            " pass; review the probabilities above."
         )
+        print(f"Nothing was written. {_display(DETECTOR_PATH)} is unchanged.")
         return 1
 
+    DETECTOR_PATH.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, DETECTOR_PATH)
     print("Gate passed (9.7): t-1005 rejected, no legitimate sample rejected.")
+    print(f"Model written to {_display(DETECTOR_PATH)}")
     return 0
 
 

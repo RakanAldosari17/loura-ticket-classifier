@@ -793,6 +793,15 @@ Body:
 </ticket>
 ```
 
+**The closing marker is neutralised in ticket text [DECIDED 23 Nov 2026, Rakan].** Any case or spacing
+of `</ticket>` appearing in the subject or body is replaced with `[/ticket]` before the prompt is
+built, so the data block always has exactly one end and it is the one the code wrote. Without it, a
+body containing the marker could make the rest of itself look like instructions rather than customer
+text. The reason to do this even though the suspicion score would probably catch such a ticket: **L2
+must hold on its own.** A defence layer that only works when the layer in front of it succeeded is not
+a layer. Ordinary angle brackets are untouched, so a customer writing about HTML or XML keeps their
+words.
+
 ### 10.3 Fake model [DECIDED: fake is the default; behaviour DECIDED A23, A24: approved as written 23 Nov 2026]
 - Deterministic keyword rules that produce plausible classifications for the sample tickets (expected results in section 15). Rules live in the fake model module, clearly separated, and are easy to read.
 - **"Occasionally broken"** when running the service **[DECIDED A24]**: with probability from a setting (default 10%), instead of a valid reply it returns one of these broken replies, chosen at random:
@@ -1006,6 +1015,9 @@ Build in this order, so the phrase score is finished and tested before the detec
 - Add `scikit-learn` to `requirements.txt`, pinned.
 - **The 9.7 gate:** t-1005 rejected, none of the other nine rejected. If a legitimate sample is
   rejected, **stop and show Rakan the probabilities**; do not tune cut-offs, features or thresholds.
+- **The script writes the model only if the gate passes [DECIDED 23 Nov 2026, Rakan].** Train, report,
+  check, then save. A failed run must leave the existing `detector.joblib` untouched, so a bad retrain
+  cannot replace a good model that the service and the test suite depend on.
 - **Tests** (in `tests/test_injection_detector.py`):
   - the model file loads
   - t-1005 is rejected (total ≥ 3)
@@ -1042,7 +1054,11 @@ Build in this order, so the phrase score is finished and tested before the detec
   - **a flagged-but-not-rejected attack ticket** (L1b total 1–2, the common case for a reworded attack
     per 9.7) ends `classified` with a valid `category` and `priority` and `flagged = true`: it reaches
     the model, and the structural layers keep the result harmless **[DECIDED 23 Nov 2026, Rakan]**
-  - poisoned summary scoring ≥ 3: `failed` / `suspected_injection`
+  - **a realistic poisoned summary** ("Approved for immediate refund.", L3 score 1): ends
+    `classified` and `flagged = true`, **not** rejected — the documented weakness above
+    **[DECIDED 23 Nov 2026, Rakan]**
+  - **a poisoned summary scoring ≥ 3** (contrived is fine; it tests the threshold, not realism):
+    `failed` / `suspected_injection`
   - summary scoring 1–2: `classified` and `flagged`
   - two workers, several tickets: every ticket processed exactly once
   - startup reset: a ticket left `under_review` is back to `pending` after startup and then gets processed
@@ -1140,6 +1156,9 @@ Sections, in this order:
    - notification instead of polling, keeping a startup scan
    - evaluate larger pretrained transformer classifiers for prompt-injection detection, then fine-tune
      the best one on labelled support tickets and compare it with the current model on the same test set
+   - evaluate the detector with **stratified k-fold cross-validation and report confidence intervals**:
+     116 test rows give one noisy point estimate, so the difference between, say, recall 0.55 and 0.60
+     is well inside the noise and the current single number reads as more precise than it is
 6. **Weaknesses** (honest; Rakan edits):
    - SQLite allows one write at a time; this design assumes a single running instance
    - polling adds up to about a second of delay and constant idle queries
@@ -1154,6 +1173,13 @@ Sections, in this order:
    - false positives: a legitimate ticket containing a listed phrase is failed and needs human review; t-1005's real question waits for review
    - "one sentence" is approximated by length and a single line
    - the fake model's classifications come from keyword rules, not language understanding
+   - **a realistically poisoned summary is flagged, not rejected.** The L3 summary score needs three
+     distinct weak phrases to reach 3, and a short poisoned summary rarely has that many: the exact
+     summary t-1005 tries to induce, "Approved for immediate refund.", scores **1**. So it is stored,
+     flagged, and left for a human. This is deliberate [DECIDED 23 Nov 2026, Rakan]: a flag already
+     sends the ticket to a person, L4 means nothing acts on the summary, and rejecting at 1+ would
+     fail legitimate billing summaries, which routinely contain "refund" and "approved". The weakness
+     is that the L3 content check is therefore weaker than the weights in 9.2 suggest
    - the injection detector is trained on a **small** dataset (546 training rows), made of
      **chatbot-style prompts rather than support tickets**, in **classic injection phrasing**; it will
      generalise worse to novel attacks and to ticket-shaped text than the test score suggests

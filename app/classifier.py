@@ -15,6 +15,7 @@ result or a refusal. That makes every rule in it testable without a model.
 """
 
 import json
+import re
 from dataclasses import dataclass
 
 from app.config import CATEGORIES, PRIORITIES, SUMMARY_MAX_LENGTH
@@ -46,6 +47,13 @@ Rules:
 # link is the one thing in a sentence someone might click.
 _URL_MARKERS = ("http://", "https://", "www.")
 
+# Any casing of the closing marker, so `</TICKET>` is caught as well as
+# `</ticket>`. Written to stay legible in the prompt rather than disappear, so
+# the model still reads the customer's words and a reviewer can see what was
+# changed and why.
+_CLOSING_MARKER = re.compile(r"</\s*ticket\s*>", re.IGNORECASE)
+_MARKER_REPLACEMENT = "[/ticket]"
+
 
 @dataclass(frozen=True)
 class Classification:
@@ -68,13 +76,35 @@ class InvalidOutputError(Exception):
 def build_ticket_text(subject: str, body: str) -> str:
     """Wrap a ticket as data for the prompt (10.2).
 
-    The subject and body go inside the markers exactly as the customer wrote
-    them. Nothing is stripped or escaped: a customer who writes `</ticket>` has
-    not escaped anything, because the instructions tell the model to treat
-    everything between the markers as data, and because no layer after this one
-    trusts the reply anyway.
+    The subject and body go inside the markers as the customer wrote them, with
+    one change: anything that looks like the closing marker is neutralised, so
+    no ticket content can appear to end the data block early. Without that, a
+    body containing `</ticket>` could make the rest of itself look like
+    instructions to the model rather than customer text.
+
+    This is L2 holding on its own. The suspicion score might well catch such a
+    ticket first, but a defence layer should not depend on the layer in front of
+    it: if L1b misses the attack, the data block still has exactly one end, and
+    it is the one this function wrote.
     """
-    return f"<ticket>\nSubject: {subject}\nBody:\n{body}\n</ticket>"
+    return (
+        "<ticket>\n"
+        f"Subject: {_neutralise_markers(subject)}\n"
+        "Body:\n"
+        f"{_neutralise_markers(body)}\n"
+        "</ticket>"
+    )
+
+
+def _neutralise_markers(text: str) -> str:
+    """Defuse anything in customer text that imitates the closing marker.
+
+    Case-insensitive, because `</TICKET>` would close the block just as well to
+    a model reading the prompt. The replacement keeps the text readable, so the
+    model still sees what the customer wrote and a reviewer can tell what
+    happened.
+    """
+    return _CLOSING_MARKER.sub(_MARKER_REPLACEMENT, text)
 
 
 def validate_reply(reply: str) -> Classification:

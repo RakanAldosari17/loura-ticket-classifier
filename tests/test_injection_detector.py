@@ -219,6 +219,71 @@ def test_most_detected_attacks_are_only_flagged_not_rejected():
     assert flagged_only > rejected
 
 
+# --- the training script's own safety ------------------------------------
+
+
+def _load_training_script():
+    """Import the training script by path; `scripts/` is not a package."""
+    import importlib.util
+
+    path = Path("scripts/train_injection_detector.py")
+    spec = importlib.util.spec_from_file_location("train_detector", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_failed_gate_leaves_the_existing_model_file_untouched(monkeypatch, tmp_path):
+    """A bad retrain must not replace a good model.
+
+    The script trains, reports, checks the gate, and only writes afterwards. If
+    it saved first, a run that failed its own checks would leave the service and
+    the test suite using the model that just failed.
+    """
+    script = _load_training_script()
+
+    existing = tmp_path / "detector.joblib"
+    existing.write_bytes(b"the model that already works")
+    monkeypatch.setattr(script, "DETECTOR_PATH", existing)
+    # Force the gate to fail, without having to train a deliberately bad model.
+    monkeypatch.setattr(script, "report_samples", lambda model: ["t-1001"])
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    assert existing.read_bytes() == b"the model that already works"
+
+
+def test_a_passing_gate_writes_the_model(monkeypatch, tmp_path):
+    """The other half: a good run does save."""
+    script = _load_training_script()
+
+    target = tmp_path / "detector.joblib"
+    monkeypatch.setattr(script, "DETECTOR_PATH", target)
+    monkeypatch.setattr(script, "report_samples", lambda model: [])
+
+    exit_code = script.main()
+
+    assert exit_code == 0
+    assert target.exists() and target.stat().st_size > 0
+
+
+def test_the_gate_message_is_neutral(capsys, monkeypatch, tmp_path):
+    """The script is read by whoever retrains it, not just by one person."""
+    script = _load_training_script()
+    monkeypatch.setattr(script, "DETECTOR_PATH", tmp_path / "detector.joblib")
+    monkeypatch.setattr(script, "report_samples", lambda model: ["t-1001"])
+
+    script.main()
+
+    output = capsys.readouterr().out
+    assert "GATE FAILED" in output
+    assert "Do not tune the cut-offs" in output
+    assert "review the probabilities above" in output
+    assert "unchanged" in output
+    assert "Rakan" not in output
+
+
 # --- what the detector adds over the phrase list -------------------------
 
 
