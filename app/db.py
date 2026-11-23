@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS tickets (
                    CHECK (failure_reason IS NULL OR
                           failure_reason IN ('suspected_injection',
                                              'model_unavailable',
-                                             'invalid_output')),
+                                             'invalid_output',
+                                             'internal_error')),
     created_at     TEXT    NOT NULL,
     updated_at     TEXT    NOT NULL
 );

@@ -4,10 +4,14 @@ Fixtures live here rather than being copied into each test file, so every test
 gets the same clean, isolated starting point.
 """
 
+import asyncio
+import functools
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app import db
+from app import main as app_main
 from app.main import app
 
 
@@ -28,12 +32,39 @@ def temp_db(tmp_path, monkeypatch) -> str:
 
 
 @pytest.fixture
-def client(temp_db) -> TestClient:
-    """A test client whose requests hit an empty database.
+def client(temp_db, monkeypatch) -> TestClient:
+    """A test client whose requests hit an empty database, with no workers.
 
     `TestClient` calls the app directly, without a network or a running server,
     so the API tests are as fast as the database ones. It depends on `temp_db`,
     so each test gets its own database and the order tests run in cannot matter.
+
+    The workers are deliberately **not** started. These tests are about the
+    front door: what it accepts, what it rejects, and what it stores. With
+    workers running, a ticket submitted by a test would be classified a few
+    milliseconds later, so an assertion about a `pending` ticket would pass or
+    fail depending on timing. `tests/test_startup.py` runs the real application
+    with its workers; that is where the two halves are tested together.
     """
+    async def no_workers(settings, model):
+        return []
+
+    monkeypatch.setattr(app_main, "run_workers", no_workers)
+
     with TestClient(app) as test_client:
         yield test_client
+
+
+def run_async(test):
+    """Let a test be written as `async def` without a new dependency.
+
+    `pytest-asyncio` would do this, but section 12 fixes the dependency list and
+    this is four lines. The wrapper is what pytest sees, and `functools.wraps`
+    keeps the original signature visible so fixtures are still injected.
+    """
+
+    @functools.wraps(test)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(test(*args, **kwargs))
+
+    return wrapper

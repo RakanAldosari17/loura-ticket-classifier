@@ -19,8 +19,32 @@ code treats a model's output, and for that the output only has to be plausible.
 """
 
 import random
+import re
 
 from app.models.base import ModelUnavailableError
+
+
+def _as_patterns(keywords: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    """Compile keywords to match whole words only.
+
+    Plain substring matching is wrong here and quietly so: "down" matches
+    "download", "api" matches "rapid", "error" matches "terror" and "500"
+    matches "1500000". Each of those is a real sentence a customer might write,
+    and each would have been classified on a word that is not there.
+
+    Word forms are therefore listed in full ("charge", "charged", "charges")
+    rather than as stems, because a stem cannot have a word boundary after it.
+    """
+    return tuple(
+        re.compile(rf"\b{re.escape(keyword)}\b", re.IGNORECASE)
+        for keyword in keywords
+    )
+
+
+def _matches(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    """True if any keyword appears in the text as a whole word."""
+    return any(pattern.search(text) for pattern in patterns)
+
 
 # --- the rules (section 15) ----------------------------------------------
 #
@@ -38,11 +62,13 @@ _CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "invoice",
             "charge",
             "charged",
+            "charges",
             "refund",
             "subscription",
             "card statement",
             "payment",
-            "overcharg",
+            "overcharge",
+            "overcharged",
             "billing",
         ),
     ),
@@ -64,10 +90,12 @@ _CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "api",
             "500",
+            "500s",
             "error",
             "export",
             "timeout",
             "upload",
+            "uploading",
             "broken",
             "crash",
             "not working",
@@ -100,8 +128,13 @@ _LOW_PRIORITY_KEYWORDS = (
     "how do i",
 )
 
-# Below this, with no keyword match at all, a body is junk rather than a report.
-_JUNK_BODY_LENGTH = 20
+# Compiled once at import. The readable keyword tuples above stay the thing a
+# reviewer reads; these are what the matching actually uses.
+_CATEGORY_PATTERNS = tuple(
+    (category, _as_patterns(keywords)) for category, keywords in _CATEGORY_KEYWORDS
+)
+_HIGH_PRIORITY_PATTERNS = _as_patterns(_HIGH_PRIORITY_KEYWORDS)
+_LOW_PRIORITY_PATTERNS = _as_patterns(_LOW_PRIORITY_KEYWORDS)
 
 _SUMMARY_BY_CATEGORY = {
     "billing": "Customer reports a billing problem and asks for it to be corrected.",
@@ -230,9 +263,9 @@ def _category_for(subject: str, body: str) -> str:
     overcharged, but the customer says that is "a separate ticket", and its
     subject — "Data export empty" — is what they actually want fixed.
     """
-    for text in (subject.lower(), body.lower()):
-        for category, keywords in _CATEGORY_KEYWORDS:
-            if any(keyword in text for keyword in keywords):
+    for text in (subject, body):
+        for category, patterns in _CATEGORY_PATTERNS:
+            if _matches(text, patterns):
                 return category
     return "other"
 
@@ -241,13 +274,12 @@ def _priority_for(subject: str, body: str, category: str) -> str:
     """Pick a priority from what the ticket says about urgency."""
     text = f"{subject}\n{body}".lower()
 
-    if any(keyword in text for keyword in _HIGH_PRIORITY_KEYWORDS):
+    if _matches(text, _HIGH_PRIORITY_PATTERNS):
         return "high"
-    if any(keyword in text for keyword in _LOW_PRIORITY_KEYWORDS):
+    if _matches(text, _LOW_PRIORITY_PATTERNS):
         return "low"
-    # Junk with no keywords at all is nobody's emergency (t-1008, "asdf").
-    if category == "other" and len(body.strip()) < _JUNK_BODY_LENGTH:
-        return "low"
+    # A ticket that matched no category keyword at all is nobody's emergency:
+    # t-1006 is a feature request, t-1008 is "asdf".
     if category == "other":
         return "low"
     return "medium"

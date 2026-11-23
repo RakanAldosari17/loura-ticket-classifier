@@ -180,6 +180,43 @@ def test_an_unrecognisable_ticket_is_other_and_low():
     assert (result.category, result.priority) == ("other", "low")
 
 
+@pytest.mark.parametrize(
+    ("text", "expected_category"),
+    [
+        # The words are really there.
+        ("Our API integration broke", "technical"),
+        ("I got an error on checkout", "technical"),
+        # The words only look like they are there.
+        ("I cannot download the file", "other"),
+        ("There was a rapid change in my plan", "other"),
+        ("My terror of spreadsheets is relevant", "other"),
+        ("Reference 1500000 is wrong", "other"),
+    ],
+)
+def test_keywords_match_whole_words_only(text, expected_category):
+    """Substring matching was quietly wrong.
+
+    "down" matched "download", "api" matched "rapid", "error" matched "terror"
+    and "500" matched "1500000" — each a sentence a customer might really write,
+    each classified on a word that is not in it.
+    """
+    from app.models.fake import _category_for
+
+    assert _category_for("", text) == expected_category
+
+
+def test_a_download_question_is_not_treated_as_an_outage():
+    """The clearest case: "download" used to make a ticket high priority.
+
+    "down" is a high-priority keyword, so any customer asking about downloading
+    something got the same priority as a production outage.
+    """
+    from app.models.fake import _priority_for
+
+    assert _priority_for("Invoices", "Where do I download my invoices?", "billing") == "medium"
+    assert _priority_for("Outage", "The service is down", "technical") == "high"
+
+
 # --- the broken replies (A24) -------------------------------------------
 
 

@@ -16,7 +16,12 @@ from dataclasses import dataclass
 STATUSES = ("pending", "under_review", "classified", "failed")
 CATEGORIES = ("billing", "technical", "account", "other")
 PRIORITIES = ("low", "medium", "high")
-FAILURE_REASONS = ("suspected_injection", "model_unavailable", "invalid_output")
+FAILURE_REASONS = (
+    "suspected_injection",
+    "model_unavailable",
+    "invalid_output",
+    "internal_error",
+)
 
 # --- Fixed limits (section 11) --------------------------------------------
 # Deliberately not configurable: they are part of the design, not deployment

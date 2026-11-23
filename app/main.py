@@ -17,6 +17,7 @@ from app.api import register_error_handlers, router
 from app.config import load_settings
 from app.injection_detector import load_detector
 from app.models import get_model_client
+from app.worker import run_workers, stop_workers
 
 # One line per lifecycle event, at INFO (A27). Configured once, here, because
 # this module is the entry point and nothing else should touch global logging.
@@ -35,8 +36,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     makes it the right place for work that must happen before the first request
     and be undone after the last one.
 
-    So far this is steps 1 to 3 of 7.2. The restart reset (step 4) and the
-    workers (step 5) arrive in Chunk 6.
+    All five steps of 7.2 run here, in that order, before the first request is
+    served. On shutdown the worker tasks are cancelled.
     """
     # Step 1: settings, and the model client they ask for. Building the client
     # here is the startup check: a real provider with no key raises and the
@@ -55,7 +56,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Step 3.
     db.init_db()
     logger.info("database ready")
-    yield
+
+    # Step 4: restart recovery. A ticket is only `under_review` because some
+    # worker claimed it, and no worker survives a restart, so anything left in
+    # that state is abandoned and has to be picked up again.
+    reset_count = db.reset_under_review()
+    logger.info("startup reset %d under_review ticket(s) to pending", reset_count)
+
+    # Step 5.
+    worker_tasks = await run_workers(settings, app.state.model_client)
+    try:
+        yield
+    finally:
+        await stop_workers(worker_tasks)
 
 
 app = FastAPI(

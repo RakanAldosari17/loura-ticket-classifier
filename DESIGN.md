@@ -197,7 +197,7 @@ Two environment decisions were taken at the same time (not design items, recorde
 | # | Question | When |
 |---|---|---|
 | A28 | Which real provider, if any | Chunk 9, only if Rakan wants a real provider |
-| A30 | If a worker hits an unexpected error while processing a ticket, which state is the ticket left in (`failed` with which reason, or back to `pending`)? | Start of Chunk 6 |
+| A30 | If a worker hits an unexpected error while processing a ticket, which state is the ticket left in (`failed` with which reason, or back to `pending`)? | **Answered 23 Nov 2026: `failed` with the new reason `internal_error`** (4.3) |
 | A31 | Which folder holds the detector's training data and model file? | **Answered 23 Nov 2026: `data/injection/`**, holding `train.csv`, `test.csv` and `detector.joblib` together (section 13) |
 
 ## 3. Scope
@@ -278,6 +278,12 @@ pending ──(worker claims)──► under_review ──► classified
   - `suspected_injection`
   - `model_unavailable`
   - `invalid_output`
+  - `internal_error` — **[DECIDED 23 Nov 2026, Rakan; answers A30]** an unexpected exception while a
+    worker was processing the ticket: a bug in our code, not a model failure. The full exception and
+    the ticket id are logged; **nothing else about the error is stored**, and never the exception text.
+    Chosen over putting the ticket back to `pending`, which would retry a deterministic bug forever and
+    burn a model call each time, and over reusing `model_unavailable`, which would blame the provider
+    for our own fault.
 
 The brief names three statuses (`pending`, `classified`, `failed`). `under_review` is an addition; the README must say why (it lets workers claim tickets safely).
 
@@ -304,7 +310,7 @@ A single file with nothing to install, so the service runs from a clean clone. I
 | `priority` | TEXT | NULL, CHECK NULL or in (`low`, `medium`, `high`) |
 | `summary` | TEXT | NULL |
 | `flagged` | INTEGER | NOT NULL DEFAULT 0, CHECK in (0, 1) |
-| `failure_reason` | TEXT | NULL, CHECK NULL or in (`suspected_injection`, `model_unavailable`, `invalid_output`) |
+| `failure_reason` | TEXT | NULL, CHECK NULL or in (`suspected_injection`, `model_unavailable`, `invalid_output`, `internal_error`) |
 | `created_at` | TEXT | NOT NULL, UTC ISO 8601 **[DEFAULT A8]** |
 | `updated_at` | TEXT | NOT NULL, UTC ISO 8601 **[DEFAULT A8]** |
 
@@ -483,7 +489,14 @@ loop forever:
 6. `mark_classified(category, priority, summary, flagged)`.
 
 Rules:
-- A worker never crashes the loop: any unexpected exception while processing a ticket must be caught, logged, and must leave that ticket in a defined state. **[ASK A30]** Which state: `failed` with which reason, or back to `pending`? Ask Rakan at the start of Chunk 6.
+- A worker never crashes the loop: any unexpected exception while processing a ticket must be caught,
+  logged with the ticket id and the full exception, and must leave that ticket **`failed` with reason
+  `internal_error`** (**[DECIDED A30]**, 4.3). Nothing about the exception is stored.
+- **Every guarded write is checked.** `mark_classified` and `mark_failed` return whether the row was
+  actually updated. A `False` means the ticket was no longer `under_review` — a restart reset it and
+  someone else has it — so the worker **logs a warning with the ticket id** and does not retry or
+  overwrite. Silently ignoring it would hide the one case where two workers overlapped
+  **[DECIDED 23 Nov 2026, Rakan]**.
 - The raw model reply is **never** stored in the database.
 - `flagged` from step 1 carries through to the final write, whatever the final status.
 
@@ -1134,7 +1147,10 @@ Sections, in this order:
    2. Async execution: worker loops inside the API process, polling the database
    3. Concurrency: 2 workers, with the Little's Law reasoning (7.5)
    4. Restart: reset `under_review` to `pending` at startup; double classification possible and accepted
-   5. Retries and failure: one retry for `model_unavailable` after 2 s; no retry for `invalid_output`; never for `suspected_injection`; every failure stores a reason
+   5. Retries and failure: one retry for `model_unavailable` after 2 s; no retry for `invalid_output`;
+      never for `suspected_injection`; `internal_error` for a bug in our own worker; every failure
+      stores a reason. Include the failure-reason table: the four reasons, what each means, and
+      whether it is retried.
    6. Prompt injection: the four levels, the suspicion score, false positives over false negatives,
       display-only summaries, **and the trained detector (9.6)**: what it is (TF-IDF + logistic
       regression), the dataset and its licence, how probability becomes points, why it runs on ticket
