@@ -1,5 +1,8 @@
-# Section 12: these four and nothing else.
+# Section 12: these five and nothing else.
 fastapi==0.115.5
 uvicorn==0.32.1
 pytest==8.3.4
 httpx==0.28.1
+
+# The prompt-injection detector (DESIGN.md 9.6). Brings numpy, scipy and joblib.
+scikit-learn==1.9.1

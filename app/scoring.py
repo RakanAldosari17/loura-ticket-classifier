@@ -19,6 +19,7 @@ from app.config import (
     SUSPICION_REJECT_THRESHOLD,
     WEAK_PHRASE_POINTS,
 )
+from app.injection_detector import detector_points, injection_probability
 
 # Section 9.2. Strong phrases are worth 3 points: one is enough to reject a
 # ticket on its own. Weak phrases are worth 1: they only matter in combination.
@@ -69,6 +70,22 @@ def phrase_score(text: str) -> int:
     strong_hits = sum(1 for phrase in STRONG_PHRASES if phrase in normalised)
     weak_hits = sum(1 for phrase in WEAK_PHRASES if phrase in normalised)
     return strong_hits * STRONG_PHRASE_POINTS + weak_hits * WEAK_PHRASE_POINTS
+
+
+def input_score(subject: str, body: str) -> int:
+    """The L1b score for a ticket: phrases plus the trained detector (9.4, 9.6).
+
+    Two independent signals adding into one total. Either can reach 3 on its
+    own, so a ticket the phrase list never anticipated can still be rejected by
+    the detector, and a detector that misses an obvious injection is still
+    caught by the list.
+
+    Only used before the model is called. The L3 summary check is phrase-only:
+    the summary is machine-generated text, and the detector was trained on
+    human-written prompts.
+    """
+    text = ticket_text(subject, body)
+    return phrase_score(text) + detector_points(injection_probability(text))
 
 
 def is_flagged(score: int) -> bool:

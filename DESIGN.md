@@ -650,6 +650,11 @@ corrected to match.
 data always produces the same model. It writes the model file, then prints the validation report (9.7).
 The trained model file is committed, so running the service never requires training.
 
+"The same model" means the same *behaviour*: two runs produce identical probabilities (verified on the
+116 test rows and the 10 samples, maximum difference 0.0). The saved `.joblib` files are **not**
+byte-identical between runs; that is how joblib serialises, not a difference in the model. So a
+reviewer re-running the script gets the same numbers but a different file hash.
+
 **How it is wired in.**
 - Input: **ticket text only** — subject and body, the same text the phrase score reads (A19).
 - The model is loaded **once at startup**, not per ticket. Loading it per ticket would add file I/O
@@ -665,12 +670,33 @@ phrase points. The cut-offs live in `config.py` next to the point constants:
 
 | Detector probability | Points added | Meaning |
 |---|---|---|
-| **≥ 0.90** | **3** (a strong signal) | on its own, enough to reject |
-| **0.50 to < 0.90** | **1** (a weak signal) | on its own, enough to flag |
-| **< 0.50** | **0** | no contribution |
+| **≥ 0.85** | **3** (a strong signal) | on its own, enough to reject |
+| **0.65 to < 0.85** | **1** (a weak signal) | on its own, enough to flag |
+| **< 0.65** | **0** | no contribution |
 
 The flag (1–2) and reject (3+) thresholds are **unchanged**. The two signals are independent: a ticket
 the phrase list misses can still be rejected by the detector alone, and vice versa.
+
+**Revised from 0.50 / 0.90 to 0.65 / 0.85 [DECIDED 23 Nov 2026, Rakan], after measuring.** The first
+pair were set before the model existed. Once trained, the model's probabilities on **support-ticket
+text** turned out to sit much closer to the middle than on its own training data, because the dataset's
+legitimate rows are short topic strings ("Unemployment young people Europe"), nothing like a real
+ticket. Measured on the ten samples:
+
+- legitimate tickets ranged **0.286 to 0.634**
+- t-1005, the injection, scored **0.799**
+- paraphrased attacks the phrase list misses scored **0.595 to 0.869**
+
+At 0.50 the weak cut-off fell *below* six of the nine legitimate tickets, flagging two thirds of
+ordinary traffic and making the flag close to meaningless. At 0.90 the strong cut-off was never reached
+by anything real — not even t-1005 — so the detector could not in fact reject anything on its own, and
+9.6's claim that it could was untrue in practice. 0.65 and 0.85 both sit inside the observed gap
+between legitimate tickets and attacks: no legitimate sample is flagged, t-1005 is still rejected, and
+4 of 6 paraphrased attacks are still caught.
+
+This is a **recalibration against measurement, not tuning to make the gate pass** — the gate already
+passed at 0.50 / 0.90. The numbers above belong in the README, because a reviewer should see that the
+cut-offs were measured rather than guessed, and that the measurement is from ten examples.
 
 ### 9.7 Detector validation: the gate the detector must pass [DECIDED 23 Nov 2026, Rakan]
 

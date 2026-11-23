@@ -37,6 +37,14 @@ WEAK_PHRASE_POINTS = 1
 SUSPICION_FLAG_THRESHOLD = 1
 SUSPICION_REJECT_THRESHOLD = 3
 
+# Where the trained detector's probability turns into those same points (9.6).
+# At or above the strong cut-off it is worth a strong signal, so it can reject a
+# ticket on its own; at or above the weak one, a weak signal; below, nothing.
+# Measured on the ten samples, not guessed: legitimate tickets topped out at
+# 0.634 and the injection scored 0.799, so both cut-offs sit in that gap.
+DETECTOR_STRONG_PROBABILITY = 0.85
+DETECTOR_WEAK_PROBABILITY = 0.65
+
 
 @dataclass(frozen=True)
 class Settings:

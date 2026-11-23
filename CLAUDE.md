@@ -19,7 +19,7 @@ Update this list at the end of every chunk, so a new session knows where things 
 | 0: confirm and set up | done (23 Nov 2026) | All 9 approval items approved as proposed. Skeleton, git repo, first commit done. |
 | 1: config and database | done (23 Nov 2026), reviewed | `config.py` + `db.py`. 60 tests in `tests/test_db.py` (added to the section 13 tree). Both SQL guards mutation-tested. Rakan's review applied: `insert_ticket` returns nothing, setting range checks, strong phrase `you are now` tightened to `you are now a`/`an`. |
 | 2: the front door (API) | done (23 Nov 2026) | `schemas.py`, `api.py`, minimal lifespan in `main.py` (init_db only). 139 tests. Fixed a clock-dependent flaky ordering test in Chunk 1's suite. |
-| 3: suspicion scoring | not started | |
+| 3: suspicion scoring | done (23 Nov 2026) | 3a `scoring.py` phrase lists. 3b trained detector: `injection_detector.py`, `scripts/train_injection_detector.py`, data+model in `data/injection/`. Cut-offs recalibrated 0.50/0.90 -> 0.65/0.85 after measuring (Rakan approved). 221 tests. |
 | 4: prompt and output validation | not started | |
 | 5: model interface and fake model | not started | |
 | 6: workers | not started | |
@@ -36,4 +36,5 @@ plain `python` and `pytest` are the 3.12 ones.
 - First-time setup: `/opt/homebrew/bin/python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 - Run the service: `source .venv/bin/activate && uvicorn app.main:app` (docs at http://127.0.0.1:8000/docs)
 - Load the samples: `source .venv/bin/activate && python scripts/load_samples.py` (second terminal, from Chunk 7)
-- Run the tests: `source .venv/bin/activate && python -m pytest` (plain `pytest` cannot import `app`; see DESIGN.md section 12)
+- Run the tests: `source .venv/bin/activate && python -m pytest`
+- Retrain the injection detector: `source .venv/bin/activate && python scripts/train_injection_detector.py` (optional; the model file is committed) (plain `pytest` cannot import `app`; see DESIGN.md section 12)
